@@ -1,0 +1,69 @@
+#ERROR!
+
+Sheet: "Dashboard"
+  Rows: 0, Columns: 0
+
+Sheet: "Diagnostics"
+  Rows: 0, Columns: 0
+
+Sheet: "FinalTracker"
+  Rows: 165, Columns: 8
+  Headers: Date | Description | Mode | Category | Income | Debits | CCTransactionDate | RunningBalance
+  Sample data (3 rows):
+    Row 2: Thu Jan 22 2026 12:00:00 GMT+0800 (Philippine Standard Time) | Starting Balance |  |  | 0 | 0 |  | 47253.4
+    Row 3: Mon Jan 26 2026 12:00:00 GMT+0800 (Philippine Standard Time) | Globe Load | GCash | Utilities |  | 99 |  | 47154.4
+    Row 4: Tue Jan 27 2026 12:00:00 GMT+0800 (Philippine Standard Time) | Salary B | BankTransfer | Salary | 30478.08 |  |  | 77632.48000000001
+  FinalTracker preview:
+    Row 1: Date | Description | Mode | Category | Income | Debits | CCTransactionDate | RunningBalance
+    Row 2: Thu Jan 22 2026 12:00:00 GMT+0800 (Philippine Standard Time) | Starting Balance |  |  | 0 | 0 |  | 47253.4
+    Row 3: Mon Jan 26 2026 12:00:00 GMT+0800 (Philippine Standard Time) | Globe Load | GCash | Utilities |  | 99 |  | 47154.4
+    Row 4: Tue Jan 27 2026 12:00:00 GMT+0800 (Philippine Standard Time) | Salary B | BankTransfer | Salary | 30478.08 |  |  | 77632.48000000001
+    Row 5: Mon Feb 02 2026 12:00:00 GMT+0800 (Philippine Standard Time) | Globe Load | GCash | Utilities |  | 99 |  | 77533.48000000001
+
+Sheet: "RecurSchedule"
+  Rows: 137, Columns: 7
+  Headers: Date | Description | Mode | Category | Income | Debits | CCTransactionDate
+  Sample data (3 rows):
+    Row 2: Mon Jan 26 2026 12:00:00 GMT+0800 (Philippine Standard Time) | Globe Load | GCash | Utilities |  | 99 | 
+    Row 3: Tue Jan 27 2026 12:00:00 GMT+0800 (Philippine Standard Time) | Salary B | BankTransfer | Salary | 30478.08 |  | 
+    Row 4: Mon Feb 02 2026 12:00:00 GMT+0800 (Philippine Standard Time) | Globe Load | GCash | Utilities |  | 99 | 
+
+Sheet: "RecurIncome"
+  Rows: 4, Columns: 11
+  Headers: Description | Type | Amount | Mode | Category | Frequency | Month | Day | StartDate | EndDate | Active
+  Sample data (3 rows):
+    Row 2: Salary A | Income | 30601.3 | BankTransfer | Salary | N_DAY_IN_MONTH |  | 15 | Wed Jan 21 2026 00:00:00 GMT+0800 (Philippine Standard Time) | Thu Dec 31 2026 00:00:00 GMT+0800 (Philippine Standard Time) | true
+    Row 3: Salary B | Income | 30478.08 | BankTransfer | Salary | N_DAY_IN_MONTH |  | 27 | Wed Jan 21 2026 00:00:00 GMT+0800 (Philippine Standard Time) | Thu Dec 31 2026 00:00:00 GMT+0800 (Philippine Standard Time) | true
+    Row 4: 14th Month | Income | 61079.380000000005 | BankTransfer | Bonus | ANNUAL | 12 | 12 | Wed Jan 21 2026 00:00:00 GMT+0800 (Philippine Standard Time) | Thu Dec 31 2026 00:00:00 GMT+0800 (Philippine Standard Time) | true
+
+Sheet: "RecurExpenses"
+  Rows: 12, Columns: 11
+  Headers: Description | Type | Amount | Mode | Category | Frequency | Month | Day | StartDate | EndDate | Active
+  Sample data (3 rows):
+    Row 2: Internet | Expense | 1599 | CreditCard | Utilities | N_DAY_IN_MONTH |  | 27 | Wed Jan 21 2026 00:00:00 GMT+0800 (Philippine Standard Time) | Thu Dec 31 2026 00:00:00 GMT+0800 (Philippine Standard Time) | true
+    Row 3: Gym Membership | Expense | 2450 | CreditCard | Subscriptions | N_DAY_IN_MONTH |  | 2 | Wed Jan 21 2026 00:00:00 GMT+0800 (Philippine Standard Time) | Sat May 16 2026 00:00:00 GMT+0800 (Philippine Standard Time) | true
+    Row 4: Annual Car Insurance | Expense | 24000 | BankTransfer | Insurance | ANNUAL | 9 | 1 | Wed Jan 21 2026 00:00:00 GMT+0800 (Philippine Standard Time) | Thu Dec 31 2026 00:00:00 GMT+0800 (Philippine Standard Time) | true
+
+Sheet: "VariableExpenses"
+  Rows: 28, Columns: 7
+  Headers: Date | Description | Mode | Category | Income | Debits | CCTransactionDate
+  Sample data (3 rows):
+    Row 2: Sun Feb 15 2026 12:00:00 GMT+0800 (Philippine Standard Time) | RETAIL/CONVENIENCE STORE | CreditCard | Convenience Store |  | 336 | Sun Jan 18 2026 12:00:00 GMT+0800 (Philippine Standard Time)
+    Row 3: Sun Feb 15 2026 12:00:00 GMT+0800 (Philippine Standard Time) | HOTELS/RESORTS/LEISURE/SPORTS | CreditCard | Hotels/Leisure |  | 149 | Sun Jan 18 2026 12:00:00 GMT+0800 (Philippine Standard Time)
+    Row 4: Sun Feb 15 2026 12:00:00 GMT+0800 (Philippine Standard Time) | fp*Food Panda Taguig City PH | CreditCard | Food Delivery |  | 598.3 | Sun Jan 18 2026 12:00:00 GMT+0800 (Philippine Standard Time)
+
+Sheet: "CurrentBalance"
+  Rows: 7, Columns: 3
+  Headers: Accounts | Amount | MaintainBalance
+  Sample data (3 rows):
+    Row 2: Cash | 0 | 
+    Row 3: GCash | 1177.13 | 
+    Row 4: Unionbank | 42867.76 | 
+  CurrentBalance full data:
+    Row 1: Accounts | Amount | MaintainBalance
+    Row 2: Cash | 0 | 
+    Row 3: GCash | 1177.13 | 
+    Row 4: Unionbank | 42867.76 | 
+    Row 5: BPI | 3196 | 
+    Row 6: Security Bank | 4.94 | 
+    Row 7: BDO | 7.57 | 

@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="theme-color" content="#6200EE">
+    <title>Budget Dashboard</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow-x: hidden;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            padding: 16px;
+            padding-bottom: 100px;
+            min-height: 100vh;
+            font-size: 18px;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+        h1 {
+            color: #333;
+            font-size: 40px;
+            margin-bottom: 16px;
+        }
+        .refresh-btn {
+            background: #6200EE;
+            color: white;
+            border: none;
+            padding: 16px 32px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 20px;
+            margin-top: 12px;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .refresh-btn:active {
+            background: #3700B3;
+            transform: scale(0.98);
+        }
+        .balance-card {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .balance-label {
+            color: #666;
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+        .balance-amount {
+            font-size: 42px;
+            font-weight: bold;
+            color: #333;
+        }
+        .balance-amount.positive {
+            color: #4CAF50;
+        }
+        .balance-amount.negative {
+            color: #f44336;
+        }
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        .error {
+            background: #ffebee;
+            color: #c62828;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+        }
+        .nav-links {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: white;
+            padding: 16px;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .nav-links a {
+            display: inline-block;
+            background: #6200EE;
+            color: white;
+            text-decoration: none;
+            padding: 18px 40px;
+            border-radius: 8px;
+            font-size: 20px;
+            font-weight: 600;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .nav-links a:active {
+            background: #3700B3;
+            transform: scale(0.98);
+        }
+        .last-sync {
+            text-align: center;
+            color: #999;
+            font-size: 16px;
+            margin-top: 16px;
+        }
+        .loading {
+            font-size: 18px;
+        }
+        .error {
+            font-size: 18px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>💰 Budget Dashboard</h1>
+        <button class="refresh-btn" onclick="loadBalances()">🔄 Refresh</button>
+    </div>
+    
+    <div id="loading" class="loading">Loading balances...</div>
+    <div id="error" class="error" style="display: none;"></div>
+    <div id="balances" style="display: none;"></div>
+    <div id="lastSync" class="last-sync"></div>
+    
+    <div class="nav-links">
+        <a href="#" onclick="window.top.location.href=scriptUrl+'?page=form'; return false;">➕ Add Transaction</a>
+    </div>
+
+    <script>
+        // Replace with your Apps Script web app URL
+        const scriptUrl = 'https://script.google.com/macros/s/AKfycbyBs0yvrkqkiburKMn3JDeR_Cczuehtljr53TfvrVCadAW7DjhTyvvH_f2ynv5GAEhJuw/exec';
+        
+        function formatCurrency(amount) {
+            return new Intl.NumberFormat('en-PH', {
+                style: 'currency',
+                currency: 'PHP'
+            }).format(amount);
+        }
+        
+        async function loadBalances() {
+            const loadingDiv = document.getElementById('loading');
+            const errorDiv = document.getElementById('error');
+            const balancesDiv = document.getElementById('balances');
+            const lastSyncDiv = document.getElementById('lastSync');
+            
+            loadingDiv.style.display = 'block';
+            errorDiv.style.display = 'none';
+            balancesDiv.style.display = 'none';
+            
+            try {
+                // Fetch balances from Apps Script (reads from Dashboard sheet)
+                const response = await fetch(scriptUrl + '?action=getBalances');
+                const data = await response.json();
+                
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+                
+                // Display balances (from Dashboard sheet - labels from A, values from B)
+                let html = '';
+                const balances = [
+                    { label: data.todayLabel, value: data.today },
+                    { label: data.tomorrowLabel, value: data.tomorrow },
+                    { label: data.dayAfterLabel, value: data.dayAfter },
+                    { label: data.thisWeekLabel, value: data.thisWeek },
+                    { label: data.nextWeekLabel, value: data.nextWeek }
+                ];
+                
+                balances.forEach(balance => {
+                    const amount = balance.value || 0;
+                    const isPositive = amount >= 0;
+                    html += `
+                        <div class="balance-card">
+                            <div class="balance-label">${balance.label}</div>
+                            <div class="balance-amount ${isPositive ? 'positive' : 'negative'}">
+                                ${formatCurrency(amount)}
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                balancesDiv.innerHTML = html;
+                loadingDiv.style.display = 'none';
+                balancesDiv.style.display = 'block';
+                lastSyncDiv.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+                
+            } catch (error) {
+                loadingDiv.style.display = 'none';
+                errorDiv.style.display = 'block';
+                errorDiv.textContent = '❌ Error loading balances: ' + error.message;
+            }
+        }
+        
+        // Load balances on page load
+        loadBalances();
+        
+        // Auto-refresh every 30 seconds
+        setInterval(loadBalances, 30000);
+    </script>
+</body>
+</html>

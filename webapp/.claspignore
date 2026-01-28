@@ -1,0 +1,4 @@
+# Ignore documentation files
+*.md
+README.md
+SETUP_INSTRUCTIONS.md

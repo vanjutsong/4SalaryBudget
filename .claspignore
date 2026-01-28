@@ -1,0 +1,10 @@
+export-diagnostics.js
+DIAGNOSTICS_README.md
+*.md
+**/node_modules/**
+node_modules/**
+.vscode/
+package.json
+package-lock.json
+webapp/**
+diagnostics.txt

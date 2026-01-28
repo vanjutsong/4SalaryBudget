@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="theme-color" content="#6200EE">
+    <title>Add Transaction</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow-x: hidden;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            padding: 16px;
+            padding-bottom: 100px;
+            min-height: 100vh;
+            font-size: 18px;
+        }
+        .container {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 28px;
+            font-size: 36px;
+        }
+        .form-group {
+            margin-bottom: 24px;
+        }
+        label {
+            display: block;
+            margin-bottom: 10px;
+            color: #555;
+            font-weight: 500;
+            font-size: 18px;
+        }
+        input, select {
+            width: 100%;
+            padding: 18px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            font-size: 20px;
+            transition: border-color 0.3s;
+            -webkit-appearance: none;
+            appearance: none;
+            background: white;
+        }
+        select {
+            background: white url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23333' d='M6 8L1 3h10z'/%3E%3C/svg%3E") no-repeat right 12px center;
+            padding-right: 36px;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #6200EE;
+        }
+        .radio-group {
+            display: flex;
+            gap: 12px;
+            margin-top: 8px;
+        }
+        .radio-option {
+            flex: 1;
+            padding: 18px 8px;
+            border: 2px solid #e0e0e0;
+            border-radius: 8px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 19px;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .radio-option input[type="radio"] {
+            display: none;
+        }
+        .radio-option.selected {
+            background: #6200EE;
+            color: white;
+            border-color: #6200EE;
+        }
+        .cc-date-group {
+            display: none;
+            margin-top: 12px;
+        }
+        .cc-date-group.show {
+            display: block;
+        }
+        button {
+            width: 100%;
+            padding: 20px;
+            background: #6200EE;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 22px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 20px;
+            -webkit-tap-highlight-color: transparent;
+        }
+        button:active {
+            background: #3700B3;
+            transform: scale(0.98);
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .message {
+            padding: 18px;
+            border-radius: 8px;
+            margin-top: 20px;
+            display: none;
+            font-size: 19px;
+        }
+        .message.success {
+            background: #4CAF50;
+            color: white;
+            display: block;
+        }
+        .message.error {
+            background: #f44336;
+            color: white;
+            display: block;
+        }
+        .nav-links {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: white;
+            padding: 16px;
+            box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .nav-links a {
+            display: inline-block;
+            color: #6200EE;
+            text-decoration: none;
+            padding: 16px 32px;
+            font-size: 20px;
+            font-weight: 500;
+            -webkit-tap-highlight-color: transparent;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>➕ Add Transaction</h1>
+        <form id="transactionForm">
+            <div class="form-group">
+                <label for="date">Date</label>
+                <input type="date" id="date" name="date" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="description">Description</label>
+                <input type="text" id="description" name="description" placeholder="What did you spend on?" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="mode">Payment Mode</label>
+                <select id="mode" name="mode" required>
+                    <option value="">Select...</option>
+                    <option value="Cash">Cash</option>
+                    <option value="Bank">Bank</option>
+                    <option value="CreditCard">Credit Card</option>
+                    <option value="GCash">GCash</option>
+                    <option value="Maya">Maya</option>
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="category">Category</label>
+                <select id="category" name="category" required>
+                    <option value="">Select...</option>
+                    <!-- Will be populated from Lookups sheet -->
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label>Transaction Type</label>
+                <div class="radio-group">
+                    <label class="radio-option" id="incomeOption">
+                        <input type="radio" name="type" value="Income" checked>
+                        💰 Income
+                    </label>
+                    <label class="radio-option" id="expenseOption">
+                        <input type="radio" name="type" value="Debits">
+                        💸 Expense
+                    </label>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <label for="amount">Amount</label>
+                <input type="number" id="amount" name="amount" step="0.01" min="0" placeholder="0.00" required>
+            </div>
+            
+            <div class="form-group">
+                <div class="cc-date-group" id="ccDateGroup">
+                    <label for="ccTransactionDate">Credit Card Transaction Date</label>
+                    <input type="date" id="ccTransactionDate" name="ccTransactionDate">
+                    <small style="color: #666; font-size: 16px; display: block; margin-top: 8px;">
+                        The actual date you made the purchase (due date will be calculated automatically)
+                    </small>
+                </div>
+            </div>
+            
+            <button type="submit" id="submitBtn">Save Transaction</button>
+            
+            <div id="message" class="message"></div>
+        </form>
+        
+        <div class="nav-links">
+            <a href="#" id="dashboardLink">📊 Dashboard</a>
+        </div>
+    </div>
+
+    <script>
+        // Web app URL for navigation
+        const scriptUrl = 'https://script.google.com/macros/s/AKfycbyBs0yvrkqkiburKMn3JDeR_Cczuehtljr53TfvrVCadAW7DjhTyvvH_f2ynv5GAEhJuw/exec';
+        
+        // Set up dashboard link
+        document.getElementById('dashboardLink').onclick = function() {
+            window.top.location.href = scriptUrl + '?page=dashboard';
+            return false;
+        };
+        
+        // Set today's date as default
+        document.getElementById('date').valueAsDate = new Date();
+        
+        // Load categories from Lookups sheet (will be populated by Apps Script)
+        // For now, add common categories
+        const commonCategories = ['Food', 'Transport', 'Shopping', 'Bills', 'Entertainment', 'Health', 'Other'];
+        const categorySelect = document.getElementById('category');
+        commonCategories.forEach(cat => {
+            const option = document.createElement('option');
+            option.value = cat;
+            option.textContent = cat;
+            categorySelect.appendChild(option);
+        });
+        
+        // Show/hide CC transaction date based on mode
+        document.getElementById('mode').addEventListener('change', function() {
+            const ccDateGroup = document.getElementById('ccDateGroup');
+            if (this.value === 'CreditCard') {
+                ccDateGroup.classList.add('show');
+                document.getElementById('ccTransactionDate').required = true;
+            } else {
+                ccDateGroup.classList.remove('show');
+                document.getElementById('ccTransactionDate').required = false;
+            }
+        });
+        
+        // Radio button styling
+        document.querySelectorAll('input[type="radio"]').forEach(radio => {
+            radio.addEventListener('change', function() {
+                document.querySelectorAll('.radio-option').forEach(opt => {
+                    opt.classList.remove('selected');
+                });
+                if (this.checked) {
+                    this.closest('.radio-option').classList.add('selected');
+                }
+            });
+        });
+        
+        // Set initial selected state
+        document.getElementById('incomeOption').classList.add('selected');
+        
+        // Form submission
+        document.getElementById('transactionForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const submitBtn = document.getElementById('submitBtn');
+            const messageDiv = document.getElementById('message');
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Saving...';
+            messageDiv.className = 'message';
+            messageDiv.textContent = '';
+            
+            const formData = new FormData(this);
+            const data = {
+                date: formData.get('date'),
+                description: formData.get('description'),
+                mode: formData.get('mode'),
+                category: formData.get('category'),
+                type: formData.get('type'),
+                amount: parseFloat(formData.get('amount')),
+                ccTransactionDate: formData.get('ccTransactionDate') || null
+            };
+            
+            try {
+                // Use the scriptUrl defined at the top
+                const response = await fetch(scriptUrl, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data)
+                });
+                
+                // Since we're using no-cors, we can't read the response
+                // But we'll show success after a short delay
+                setTimeout(() => {
+                    messageDiv.className = 'message success';
+                    messageDiv.textContent = '✅ Transaction saved successfully!';
+                    this.reset();
+                    document.getElementById('date').valueAsDate = new Date();
+                    document.getElementById('incomeOption').classList.add('selected');
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Save Transaction';
+                    
+                    // Clear message after 3 seconds
+                    setTimeout(() => {
+                        messageDiv.className = 'message';
+                    }, 3000);
+                }, 500);
+                
+            } catch (error) {
+                messageDiv.className = 'message error';
+                messageDiv.textContent = '❌ Error saving transaction. Please try again.';
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Save Transaction';
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+## OS / Editor junk
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+*.log
+.DS_Store
+.vscode/
+.idea/
+
+## Node / JS (if you add JS tooling later)
+node_modules/
+dist/
+build/
+npm-debug.log*
+yarn-error.log*
+pnpm-lock.yaml
+
+## Env / secrets
+.env
+.env.*
+
+## Python (just in case)
+__pycache__/
+*.py[cod]
+*.pyo
+
+## Backup files
+*.swp
+*.swo
+*.tmp
+*.bak
+
