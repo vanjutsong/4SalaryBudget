@@ -247,27 +247,28 @@ function updateFinalTracker() {
     }
   });
 
-  // Skip recurring instances that match an edited-preserved row (same desc/mode/income/debits)
-  // to avoid duplicates when user e.g. moves Salary B to the next day. Match by "closest date" within 5 days.
+  // Skip recurring instances that match any preserved row by desc+mode and date within 5 days.
+  // Amount is ignored: if salary came in earlier with different amount, you edit date/amount and we
+  // still skip the scheduled recurring instance (all recurring: income, expenses, same rule).
   const EDIT_MATCH_DAYS = 5;
+  const msPerDayRecurring = 24 * 60 * 60 * 1000;
   const recurringWithMeta = futureRecurringRaw.map((row, i) => {
     const d = toSafeDate(row[0]);
     const desc = (row[1] || '').toString().trim();
     const mode = (row[2] || '').toString().trim();
-    const income = Math.round((Number(row[4]) || 0) * 100);
-    const debits = Math.round((Number(row[5]) || 0) * 100);
-    const sig = `${desc}|${mode}|${income}|${debits}`;
-    return { row, date: d, sig, index: i };
+    return { row, date: d, desc, mode, index: i };
   });
   const skipRecurringIndices = new Set();
-  editedPreserved.forEach(ep => {
-    const msPerDay = 24 * 60 * 60 * 1000;
+  preservedRows.forEach(preserved => {
+    const preservedDate = toSafeDate(preserved[0]);
+    if (!preservedDate) return;
+    const preservedDesc = (preserved[1] || '').toString().trim();
+    const preservedMode = (preserved[2] || '').toString().trim();
     let best = { index: -1, diff: Infinity };
-    // Consider all matches (same sig, within 5 days); skip the closest by date, not the first found
     recurringWithMeta.forEach(m => {
-      if (m.sig !== ep.sig || skipRecurringIndices.has(m.index)) return;
-      const diff = Math.abs(m.date.getTime() - ep.date.getTime());
-      if (diff <= EDIT_MATCH_DAYS * msPerDay && diff < best.diff) {
+      if (m.desc !== preservedDesc || m.mode !== preservedMode || skipRecurringIndices.has(m.index)) return;
+      const diff = Math.abs(m.date.getTime() - preservedDate.getTime());
+      if (diff <= EDIT_MATCH_DAYS * msPerDayRecurring && diff < best.diff) {
         best = { index: m.index, diff };
       }
     });
@@ -375,8 +376,9 @@ function updateFinalTracker() {
     }
   });
 
-  // Skip savings goal instances that match an edited-preserved row (same desc/mode/income/debits),
-  // same "closest date within 5 days" rule as recurring; match by desc|mode only (amounts can vary per occurrence).
+  // Skip savings goal instances that match any preserved row by desc+mode and date within 5 days.
+  // Same rule as recurring: if you edited date/amount (e.g. savings went in earlier), we skip the
+  // scheduled savings instance so it doesn't double.
   const savingsWithMeta = futureSavingsGoalsRaw.map((row, i) => {
     const d = toSafeDate(row[0]);
     const desc = (row[1] || '').toString().trim();
@@ -384,14 +386,17 @@ function updateFinalTracker() {
     return { row, date: d, desc, mode, index: i };
   });
   const skipSavingsIndices = new Set();
-  const msPerDay = 24 * 60 * 60 * 1000;
-  editedPreserved.forEach(ep => {
+  const msPerDaySavings = 24 * 60 * 60 * 1000;
+  preservedRows.forEach(preserved => {
+    const preservedDate = toSafeDate(preserved[0]);
+    if (!preservedDate) return;
+    const preservedDesc = (preserved[1] || '').toString().trim();
+    const preservedMode = (preserved[2] || '').toString().trim();
     let best = { index: -1, diff: Infinity };
-    // Match by desc|mode only (amounts vary per occurrence). Skip closest by date within 5 days.
     savingsWithMeta.forEach(m => {
-      if (m.desc !== ep.desc || m.mode !== ep.mode || skipSavingsIndices.has(m.index)) return;
-      const diff = Math.abs(m.date.getTime() - ep.date.getTime());
-      if (diff <= EDIT_MATCH_DAYS * msPerDay && diff < best.diff) {
+      if (m.desc !== preservedDesc || m.mode !== preservedMode || skipSavingsIndices.has(m.index)) return;
+      const diff = Math.abs(m.date.getTime() - preservedDate.getTime());
+      if (diff <= EDIT_MATCH_DAYS * msPerDaySavings && diff < best.diff) {
         best = { index: m.index, diff };
       }
     });
@@ -474,6 +479,9 @@ function updateFinalTracker() {
   // Highlight Salary rows yellow
   highlightRows(finalTrackerSheet, writeRow, allTransactions);
 
+  // Update savings goals calculations (progress and estimated dates / required amounts)
+  updateGoalsCalculations(true);
+
   // Count stats
   const preservedCount = preservedRows.length;
   const newRecurringCount = futureRecurringTransactions.length;
@@ -489,6 +497,7 @@ function updateFinalTracker() {
     `New savings goals (future): ${newSavingsGoalsCount}\n` +
     `Total: ${allTransactions.length} transactions.\n\n` +
     (existingStartingBalanceRow ? `Starting Balance row preserved.\n` : '') +
+    `Goals calculations updated.\n\n` +
     `Remember to run "Setup Running Balance" to update formulas.`;
 
   SpreadsheetApp.getUi().alert(message);
@@ -966,7 +975,25 @@ function normalizeVariableExpensesCcDates(silent = false) {
         }
         break;
       }
-  
+
+      case 'LAST_DAY_OF_MONTH': {
+        // day and month ignored; one occurrence per month on the last calendar day
+        let y = startDate.getFullYear();
+        let m = startDate.getMonth();
+
+        while (true) {
+          const last = lastDayOfMonth(y, m);
+          const d = new Date(y, m, last, 12, 0, 0, 0);
+
+          if (d >= startDate && d <= endDate) dates.push(d);
+          if (d >= endDate) break;
+
+          m += 1;
+          if (m > 11) { m = 0; y += 1; }
+        }
+        break;
+      }
+
       case 'ANNUAL': {
         // month: 1..12, day: 1..31 (clamp) - coerce to numbers
         const numericMonth = Number(month);
@@ -2245,18 +2272,18 @@ function normalizeVariableExpensesCcDates(silent = false) {
    * - Allotment mode: Calculate estimated completion date
    * - Deadline mode: Calculate required amount per occurrence
    */
-  function updateGoalsCalculations() {
+  function updateGoalsCalculations(silent) {
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     const goalsSheet = ss.getSheetByName('SavingsGoals');
     
     if (!goalsSheet) {
-      SpreadsheetApp.getUi().alert('SavingsGoals sheet not found. Please create it first.');
+      if (!silent) SpreadsheetApp.getUi().alert('SavingsGoals sheet not found. Please create it first.');
       return;
     }
     
     const goalsLastRow = goalsSheet.getLastRow();
     if (goalsLastRow < 2) {
-      SpreadsheetApp.getUi().alert('No goals found in SavingsGoals sheet.');
+      if (!silent) SpreadsheetApp.getUi().alert('No goals found in SavingsGoals sheet.');
       return;
     }
     
@@ -2318,7 +2345,7 @@ function normalizeVariableExpensesCcDates(silent = false) {
       goalsSheet.getRange(2, 9, calculatedUpdates.length, 1).setValues(calculatedUpdates);
     }
     
-    SpreadsheetApp.getUi().alert(`Updated ${calculatedUpdates.length} goal(s).`);
+    if (!silent) SpreadsheetApp.getUi().alert(`Updated ${calculatedUpdates.length} goal(s).`);
   }
 
   /**
@@ -2385,6 +2412,27 @@ function normalizeVariableExpensesCcDates(silent = false) {
       return result;
     }
     
+    if (frequency === 'LAST_DAY_OF_MONTH') {
+      // First occurrence: last day of start month (or next month if start is after that)
+      let y = result.getFullYear();
+      let m = result.getMonth();
+      const startLast = new Date(y, m + 1, 0, 12, 0, 0, 0);
+      if (result > startLast) {
+        m += 1;
+        if (m > 11) { m = 0; y += 1; }
+      }
+      for (let i = 0; i < occurrences; i++) {
+        const last = lastDayOfMonth(y, m);
+        result.setFullYear(y);
+        result.setMonth(m);
+        result.setDate(last);
+        result.setHours(12, 0, 0, 0);
+        m += 1;
+        if (m > 11) { m = 0; y += 1; }
+      }
+      return result;
+    }
+
     // Other frequencies (unchanged)
     for (let i = 0; i < occurrences; i++) {
       switch (frequency) {
@@ -2402,7 +2450,7 @@ function normalizeVariableExpensesCcDates(silent = false) {
           result.setMonth(result.getMonth() + 1);
       }
     }
-    
+
     return result;
   }
 
@@ -2444,6 +2492,17 @@ function normalizeVariableExpensesCcDates(silent = false) {
         return Math.floor(diffDays / 365);
       case 'EVERY_N_DAYS':
         return Math.floor(diffDays / (Number(day) || 1));
+      case 'LAST_DAY_OF_MONTH': {
+        let count = 0;
+        const current = new Date(startDate.getFullYear(), startDate.getMonth(), 1, 12, 0, 0, 0);
+        while (current <= endDate) {
+          const last = lastDayOfMonth(current.getFullYear(), current.getMonth());
+          const lastDate = new Date(current.getFullYear(), current.getMonth(), last, 12, 0, 0, 0);
+          if (lastDate > startDate && lastDate <= endDate) count++;
+          current.setMonth(current.getMonth() + 1);
+        }
+        return count;
+      }
       default:
         return Math.floor(diffDays / 30); // Default to monthly
     }
@@ -2558,7 +2617,7 @@ function normalizeVariableExpensesCcDates(silent = false) {
       [''],                            // Row 11
       ['Starting Balance:'],           // Row 12
       ['Current Balance:'],            // Row 13
-      ['Actual Spent:'],               // Row 14
+      ['Actual Spent (variable):'],    // Row 14 - from VariableExpenses sheet only; excludes CreditCard
       [''],                            // Row 15
       ['Reconciliation Status:'],      // Row 16
       [''],                            // Row 17
@@ -2590,7 +2649,7 @@ function normalizeVariableExpensesCcDates(silent = false) {
       [''], // Row 11: blank
       ['=IFERROR(INDEX(FinalTracker!H:H, MATCH(B3, FinalTracker!A:A, 0)), INDEX(FinalTracker!H:H, MATCH("Starting Balance", FinalTracker!B:B, 0)))'], // Row 12: Starting Balance (fallback to Starting Balance row)
       ['=SUMPRODUCT(CurrentBalance!B2:B) - SUMPRODUCT(CurrentBalance!C2:C) - SUMPRODUCT(CurrentBalance!D2:D)'], // Row 13: Current Balance
-      ['=IFERROR(B12 - B13, "")'], // Row 14: Actual Spent
+      ['=IFERROR(SUMIFS(VariableExpenses!F2:F10000, VariableExpenses!A2:A10000, ">="&B3, VariableExpenses!A2:A10000, "<="&TODAY(), VariableExpenses!C2:C10000, "<>CreditCard"), 0)'], // Row 14: Actual Spent = VariableExpenses debits this cycle, excluding CreditCard
       [''], // Row 15: blank
       ['=IFERROR(IF(ABS(B13 - INDEX(FinalTracker!H:H, MAX(ARRAYFORMULA(IF((ISNUMBER(FinalTracker!A2:A10000))*(INT(FinalTracker!A2:A10000)<=INT(TODAY())), ROW(FinalTracker!A2:A10000), 0))))) < 0.01, "Reconciled", "Not Reconciled: " & TEXT(B13 - INDEX(FinalTracker!H:H, MAX(ARRAYFORMULA(IF((ISNUMBER(FinalTracker!A2:A10000))*(INT(FinalTracker!A2:A10000)<=INT(TODAY())), ROW(FinalTracker!A2:A10000), 0)))), "+#,##0.00;-#,##0.00")), "Not Reconciled: N/A")'], // Row 16: Reconciliation Status - INDEX/MAX/ARRAYFORMULA to get LAST valid date entry (A2:A10000 covers up to 10,000 rows, data already sorted by updateFinalTracker)
       [''], // Row 17: first blank spacing
@@ -2836,6 +2895,546 @@ function normalizeVariableExpensesCcDates(silent = false) {
     SpreadsheetApp.getUi().alert('Emergency Fund Calculator initialized!\n\nDefault: 100% of monthly salary × 6 months\n\nYou can adjust Percentage and Target Months in the sheet.');
   }
 
+  // ============================================================================
+  // SAVINGS CHECKLIST FUNCTIONS
+  // ============================================================================
+
+  /**
+   * Get account from CurrentBalance sheet by name (case-insensitive)
+   * Returns account row data or null if not found
+   */
+  function getAccountFromCurrentBalance(accountName) {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const currentBalanceSheet = ss.getSheetByName('CurrentBalance');
+    
+    if (!currentBalanceSheet) {
+      return null;
+    }
+    
+    const lastRow = currentBalanceSheet.getLastRow();
+    if (lastRow < 2) {
+      return null;
+    }
+    
+    // Read columns A-D: Account, Amount, MaintainBalance, SavingsAmount
+    const data = currentBalanceSheet.getRange(2, 1, lastRow - 1, 4).getValues();
+    
+    const accountNameLower = (accountName || '').toString().trim().toLowerCase();
+    
+    for (let i = 0; i < data.length; i++) {
+      const rowAccount = (data[i][0] || '').toString().trim().toLowerCase();
+      if (rowAccount === accountNameLower) {
+        return {
+          rowIndex: i + 2, // 1-based row number
+          account: data[i][0],
+          amount: Number(data[i][1]) || 0,
+          maintainBalance: Number(data[i][2]) || 0,
+          savingsAmount: Number(data[i][3]) || 0
+        };
+      }
+    }
+    
+    return null;
+  }
+
+  /**
+   * Get the main account from CurrentBalance (row where Main = TRUE).
+   * Returns account name or null if none marked as main.
+   */
+  function getMainAccountFromCurrentBalance() {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const currentBalanceSheet = ss.getSheetByName('CurrentBalance');
+    
+    if (!currentBalanceSheet) {
+      return null;
+    }
+    
+    const lastRow = currentBalanceSheet.getLastRow();
+    if (lastRow < 2) {
+      return null;
+    }
+    
+    // Read columns A and E: Account, Main (rows 2 to lastRow - 1)
+    const numDataRows = lastRow - 1 - 2 + 1;
+    if (numDataRows < 1) return null;
+    const data = currentBalanceSheet.getRange(2, 1, numDataRows, 5).getValues();
+    
+    for (let i = 0; i < data.length; i++) {
+      const mainVal = data[i][4];
+      const isMain = mainVal === true || mainVal === 'TRUE' || mainVal === 'true' || mainVal === 1 || mainVal === '1';
+      if (isMain) {
+        const account = (data[i][0] || '').toString().trim();
+        if (account) return account;
+      }
+    }
+    
+    return null;
+  }
+
+  /**
+   * Update account balance in CurrentBalance sheet
+   * @param {string} accountName - Account name (case-insensitive)
+   * @param {number} amountDelta - Change to Amount (positive = increase, negative = decrease, 0 = no change)
+   * @param {number} savingsAmountDelta - Change to SavingsAmount (positive = increase, negative = decrease)
+   * @returns {boolean} Success status
+   */
+  function updateAccountBalance(accountName, amountDelta, savingsAmountDelta) {
+    const account = getAccountFromCurrentBalance(accountName);
+    
+    if (!account) {
+      SpreadsheetApp.getUi().alert(`Account "${accountName}" not found in CurrentBalance sheet.`);
+      return false;
+    }
+    
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const currentBalanceSheet = ss.getSheetByName('CurrentBalance');
+    
+    const newAmount = account.amount + amountDelta;
+    const newSavingsAmount = account.savingsAmount + savingsAmountDelta;
+    
+    // Update Amount (column B)
+    currentBalanceSheet.getRange(account.rowIndex, 2).setValue(newAmount);
+    
+    // Update SavingsAmount (column D)
+    currentBalanceSheet.getRange(account.rowIndex, 4).setValue(newSavingsAmount);
+    
+    return true;
+  }
+
+  /**
+   * Ensure FinalTracker has Applied column (column J)
+   * Used for both Apply Selected Savings and Apply Selected Salary
+   */
+  function ensureAppliedColumn() {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const finalTrackerSheet = ss.getSheetByName('FinalTracker');
+    
+    if (!finalTrackerSheet) {
+      return false;
+    }
+    
+    const lastCol = finalTrackerSheet.getLastColumn();
+    const headers = finalTrackerSheet.getRange(1, 1, 1, lastCol).getValues()[0];
+    
+    if (!headers.includes('Applied')) {
+      const colIndex = 10;
+      if (lastCol < colIndex) {
+        finalTrackerSheet.getRange(1, colIndex).setValue('Applied');
+        finalTrackerSheet.getRange(1, colIndex).setFontWeight('bold');
+      } else {
+        finalTrackerSheet.getRange(1, colIndex).setValue('Applied');
+        finalTrackerSheet.getRange(1, colIndex).setFontWeight('bold');
+      }
+    }
+    
+    return true;
+  }
+
+  /** @deprecated Use ensureAppliedColumn */
+  function ensureSavingsAppliedColumn() {
+    return ensureAppliedColumn();
+  }
+
+  /**
+   * Build account lookup map from SavingsGoals (Description → Account)
+   * Returns object mapping goal descriptions to account names
+   */
+  function buildAccountLookupMap() {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const savingsGoalsSheet = ss.getSheetByName('SavingsGoals');
+    
+    const lookupMap = {};
+    
+    if (!savingsGoalsSheet || savingsGoalsSheet.getLastRow() <= 1) {
+      return lookupMap;
+    }
+    
+    // Read columns A and K: Description and Account
+    const data = savingsGoalsSheet.getRange(2, 1, savingsGoalsSheet.getLastRow() - 1, 11).getValues();
+    
+    data.forEach(row => {
+      const description = (row[0] || '').toString().trim();
+      const account = (row[10] || '').toString().trim();
+      
+      if (description && account) {
+        lookupMap[description.toLowerCase()] = account;
+      }
+    });
+    
+    return lookupMap;
+  }
+
+  /**
+   * Generate/refresh SavingsChecklist sheet with savings occurrences from FinalTracker
+   */
+  function generateSavingsChecklist() {
+    const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+    const finalTrackerSheet = ss.getSheetByName('FinalTracker');
+    const savingsChecklistSheet = ss.getSheetByName('SavingsChecklist');
+    
+    if (!finalTrackerSheet) {
+      SpreadsheetApp.getUi().alert('FinalTracker sheet not found.');
+      return;
+    }
+    
+    ensureAppliedColumn();
+    
+    // Create or get SavingsChecklist sheet
+    let checklistSheet = savingsChecklistSheet;
+    if (!checklistSheet) {
+      checklistSheet = ss.insertSheet('SavingsChecklist');
+      // Initialize headers
+      const headers = ['Date', 'Goal Description', 'Amount', 'Account', 'FinalTrackerRow'];
+      checklistSheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+      checklistSheet.getRange(1, 1, 1, headers.length).setFontWeight('bold');
+    }
+    
+    // Build account lookup map from SavingsGoals
+    const accountLookupMap = buildAccountLookupMap();
+    
+    // Read FinalTracker data
+    const lastRow = finalTrackerSheet.getLastRow();
+    if (lastRow <= 1) {
+      SpreadsheetApp.getUi().alert('FinalTracker sheet is empty.');
+      return;
+    }
+    
+    // Read all columns (at least 10 to include SavingsApplied if it exists)
+    const maxCols = Math.max(finalTrackerSheet.getLastColumn(), 10);
+    const data = finalTrackerSheet.getRange(2, 1, lastRow - 1, maxCols).getValues();
+    
+    // Get column indices
+    const headers = finalTrackerSheet.getRange(1, 1, 1, maxCols).getValues()[0];
+    const categoryColIndex = headers.indexOf('Category');
+    const descriptionColIndex = headers.indexOf('Description');
+    const dateColIndex = headers.indexOf('Date');
+    const debitsColIndex = headers.indexOf('Debits');
+    const appliedColIndex = headers.indexOf('Applied');
+    
+    if (categoryColIndex === -1 || descriptionColIndex === -1 || dateColIndex === -1 || debitsColIndex === -1) {
+      SpreadsheetApp.getUi().alert('FinalTracker sheet missing required columns.');
+      return;
+    }
+    
+    // Filter savings entries that haven't been applied
+    const checklistRows = [];
+    
+    data.forEach((row, index) => {
+      const category = (row[categoryColIndex] || '').toString().trim();
+      const description = (row[descriptionColIndex] || '').toString().trim();
+      const date = row[dateColIndex];
+      const debits = Number(row[debitsColIndex]) || 0;
+      const applied = appliedColIndex >= 0 ? row[appliedColIndex] : false;
+      
+      // Check if it's a savings entry
+      if (category.toLowerCase() !== 'savings') {
+        return;
+      }
+      
+      // Check if already applied
+      const isApplied = applied === true || applied === 'TRUE' || applied === 'true' || applied === 1;
+      if (isApplied) {
+        return;
+      }
+      
+      // Skip if no amount
+      if (debits <= 0) {
+        return;
+      }
+      
+      // Look up account from SavingsGoals
+      const account = accountLookupMap[description.toLowerCase()] || '';
+      
+      // Add to checklist (FinalTrackerRow is 1-based, so index + 2)
+      checklistRows.push([
+        date,
+        description,
+        debits,
+        account,
+        index + 2 // FinalTrackerRow (1-based row number)
+      ]);
+    });
+    
+    // Sort by date (earliest first)
+    checklistRows.sort((a, b) => {
+      const dateA = toSafeDate(a[0]);
+      const dateB = toSafeDate(b[0]);
+      if (!dateA && !dateB) return 0;
+      if (!dateA) return 1;
+      if (!dateB) return -1;
+      return dateA.getTime() - dateB.getTime();
+    });
+    
+    // Clear existing data (keep headers)
+    const checklistLastRow = checklistSheet.getLastRow();
+    if (checklistLastRow > 1) {
+      checklistSheet.getRange(2, 1, checklistLastRow - 1, 5).clearContent();
+    }
+    
+    // Write new data
+    if (checklistRows.length > 0) {
+      checklistSheet.getRange(2, 1, checklistRows.length, 5).setValues(checklistRows);
+      // Format date column
+      checklistSheet.getRange(2, 1, checklistRows.length, 1).setNumberFormat('mm/dd/yyyy');
+      // Format amount column
+      checklistSheet.getRange(2, 3, checklistRows.length, 1).setNumberFormat('#,##0.00');
+    }
+    
+    SpreadsheetApp.getUi().alert(
+      `Savings Checklist generated!\n\n` +
+      `Found ${checklistRows.length} pending savings occurrence(s).\n\n` +
+      `Select rows and use "Apply Selected Savings Transfer" to apply them.`
+    );
+  }
+
+  /**
+   * Apply selected savings transfer from SavingsChecklist
+   */
+  function applySavingsTransfer() {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getActiveSheet();
+    
+    if (sheet.getName() !== 'SavingsChecklist') {
+      SpreadsheetApp.getUi().alert('Please select rows in the SavingsChecklist sheet.');
+      return;
+    }
+    
+    const selection = ss.getSelection();
+    const activeRange = selection.getActiveRange();
+    
+    if (!activeRange) {
+      SpreadsheetApp.getUi().alert('Please select one or more rows first.');
+      return;
+    }
+    
+    const startRow = activeRange.getRow();
+    const numRows = activeRange.getNumRows();
+    
+    if (startRow < 2) {
+      SpreadsheetApp.getUi().alert('Cannot apply header row.');
+      return;
+    }
+    
+    // Read selected rows
+    const selectedData = sheet.getRange(startRow, 1, numRows, 5).getValues();
+    
+    ensureAppliedColumn();
+    
+    const finalTrackerSheet = ss.getSheetByName('FinalTracker');
+    if (!finalTrackerSheet) {
+      SpreadsheetApp.getUi().alert('FinalTracker sheet not found.');
+      return;
+    }
+    
+    const headers = finalTrackerSheet.getRange(1, 1, 1, finalTrackerSheet.getLastColumn()).getValues()[0];
+    const appliedColIndex = headers.indexOf('Applied');
+    
+    if (appliedColIndex === -1) {
+      SpreadsheetApp.getUi().alert('Applied column (column J) not found in FinalTracker.');
+      return;
+    }
+    
+    let successCount = 0;
+    let errorCount = 0;
+    const errors = [];
+    
+    // Process each selected row
+    for (let i = 0; i < selectedData.length; i++) {
+      const row = selectedData[i];
+      const date = row[0];
+      const description = row[1];
+      const amount = Number(row[2]) || 0;
+      const account = (row[3] || '').toString().trim();
+      const finalTrackerRow = Number(row[4]) || 0;
+      
+      if (!account) {
+        errors.push(`Row ${startRow + i}: No account specified`);
+        errorCount++;
+        continue;
+      }
+      
+      if (amount <= 0) {
+        errors.push(`Row ${startRow + i}: Invalid amount`);
+        errorCount++;
+        continue;
+      }
+      
+      if (finalTrackerRow < 2) {
+        errors.push(`Row ${startRow + i}: Invalid FinalTracker row`);
+        errorCount++;
+        continue;
+      }
+      
+      // Main account (Main=TRUE): applying savings only increases SavingsAmount (Amount unchanged).
+      // Non-main accounts: increase Amount and SavingsAmount, and subtract from main (source of funds).
+      const mainAccount = getMainAccountFromCurrentBalance();
+      const mainAccountLower = (mainAccount || '').toString().trim().toLowerCase();
+      const accountLower = account.toLowerCase();
+      const isMainAccount = mainAccountLower && accountLower === mainAccountLower;
+      
+      let amountDelta = 0;
+      if (!isMainAccount) {
+        amountDelta = amount; // Increase Amount for non-main accounts
+      }
+      const savingsAmountDelta = amount;
+      
+      const updateSuccess = updateAccountBalance(account, amountDelta, savingsAmountDelta);
+      
+      if (!updateSuccess) {
+        errors.push(`Row ${startRow + i}: Failed to update account "${account}"`);
+        errorCount++;
+        continue;
+      }
+      
+      // Non-main account: subtract from main account (source of funds)
+      if (!isMainAccount && mainAccount) {
+        const mainDecreaseSuccess = updateAccountBalance(mainAccount, -amount, 0);
+        if (!mainDecreaseSuccess) {
+          // Roll back target account update
+          updateAccountBalance(account, -amountDelta, -savingsAmountDelta);
+          errors.push(`Row ${startRow + i}: Failed to deduct ${amount} from main account "${mainAccount}"`);
+          errorCount++;
+          continue;
+        }
+      }
+      
+      // Mark as applied in FinalTracker (column J)
+      finalTrackerSheet.getRange(finalTrackerRow, appliedColIndex + 1).setValue(true);
+      
+      successCount++;
+    }
+    
+    // Remove applied rows from checklist
+    if (successCount > 0) {
+      // Delete rows in reverse order to maintain indices
+      for (let i = selectedData.length - 1; i >= 0; i--) {
+        const row = selectedData[i];
+        const amount = Number(row[2]) || 0;
+        const account = (row[3] || '').toString().trim();
+        
+        if (amount > 0 && account) {
+          // Only delete if it was successfully processed
+          sheet.deleteRow(startRow + i);
+        }
+      }
+    }
+    
+    // Show summary
+    let message = `Savings Transfer Applied!\n\n`;
+    message += `Successfully applied: ${successCount}\n`;
+    if (errorCount > 0) {
+      message += `Errors: ${errorCount}\n\n`;
+      message += errors.join('\n');
+    }
+    
+    SpreadsheetApp.getUi().alert(message);
+  }
+
+  /**
+   * Apply salary to main account (Main=TRUE in CurrentBalance) when salary row is selected in FinalTracker
+   */
+  function applySalaryTransfer() {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sheet = ss.getActiveSheet();
+    
+    if (sheet.getName() !== 'FinalTracker') {
+      SpreadsheetApp.getUi().alert('Please select salary rows in the FinalTracker sheet.');
+      return;
+    }
+    
+    const selection = ss.getSelection();
+    const activeRange = selection.getActiveRange();
+    
+    if (!activeRange) {
+      SpreadsheetApp.getUi().alert('Please select one or more rows first.');
+      return;
+    }
+    
+    const startRow = activeRange.getRow();
+    const numRows = activeRange.getNumRows();
+    
+    if (startRow < 2) {
+      SpreadsheetApp.getUi().alert('Cannot apply header row.');
+      return;
+    }
+    
+    // Read selected rows
+    const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+    const categoryColIndex = headers.indexOf('Category');
+    const incomeColIndex = headers.indexOf('Income');
+    const descriptionColIndex = headers.indexOf('Description');
+    
+    if (categoryColIndex === -1 || incomeColIndex === -1) {
+      SpreadsheetApp.getUi().alert('FinalTracker sheet missing required columns.');
+      return;
+    }
+    
+    const selectedData = sheet.getRange(startRow, 1, numRows, sheet.getLastColumn()).getValues();
+    
+    ensureAppliedColumn();
+    const appliedColIndex = headers.indexOf('Applied');
+    
+    let successCount = 0;
+    let errorCount = 0;
+    const errors = [];
+    
+    // Process each selected row
+    for (let i = 0; i < selectedData.length; i++) {
+      const row = selectedData[i];
+      const category = (row[categoryColIndex] || '').toString().trim();
+      const income = Number(row[incomeColIndex]) || 0;
+      const description = row[descriptionColIndex] || '';
+      
+      // Validate it's a salary row
+      if (category.toLowerCase() !== 'salary') {
+        errors.push(`Row ${startRow + i}: Not a salary row (Category: ${category})`);
+        errorCount++;
+        continue;
+      }
+      
+      if (income <= 0) {
+        errors.push(`Row ${startRow + i}: No income amount`);
+        errorCount++;
+        continue;
+      }
+      
+      // Find main account (Main=TRUE in CurrentBalance)
+      const mainAccountName = getMainAccountFromCurrentBalance();
+      
+      if (!mainAccountName) {
+        errors.push(`Row ${startRow + i}: No main account (mark one account Main=TRUE in CurrentBalance)`);
+        errorCount++;
+        continue;
+      }
+      
+      // Update main account Amount (increase by salary amount)
+      const updateSuccess = updateAccountBalance(mainAccountName, income, 0);
+      
+      if (!updateSuccess) {
+        errors.push(`Row ${startRow + i}: Failed to update main account "${mainAccountName}"`);
+        errorCount++;
+        continue;
+      }
+      
+      // Mark as applied in FinalTracker (column J)
+      if (appliedColIndex >= 0) {
+        sheet.getRange(startRow + i, appliedColIndex + 1).setValue(true);
+      }
+      
+      successCount++;
+    }
+    
+    // Show summary
+    let message = `Salary Transfer Applied!\n\n`;
+    message += `Successfully applied: ${successCount}\n`;
+    if (errorCount > 0) {
+      message += `Errors: ${errorCount}\n\n`;
+      message += errors.join('\n');
+    }
+    
+    SpreadsheetApp.getUi().alert(message);
+  }
+
   function onOpen() {
     // Budget Tracker menu (features)
     SpreadsheetApp.getUi()
@@ -2857,6 +3456,10 @@ function normalizeVariableExpensesCcDates(silent = false) {
       .addSeparator()
       .addItem('Update Goals Progress', 'updateGoalsCalculations')
       .addItem('View Goals Summary', 'viewGoalsSummary')
+      .addSeparator()
+      .addItem('Generate Savings Checklist', 'generateSavingsChecklist')
+      .addItem('Apply Selected Savings Transfer', 'applySavingsTransfer')
+      .addItem('Apply Selected Salary', 'applySalaryTransfer')
       .addSeparator()
       .addItem('Inspect Sheet Structure', 'inspectSheetStructure')
       .addItem('Export Diagnostics', 'exportDiagnostics')

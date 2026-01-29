@@ -22,8 +22,8 @@ const SCHEMA = {
     description: 'Combined transaction tracker with running balance and edit tracking'
   },
   CurrentBalance: {
-    headers: ['Account', 'Amount', 'MaintainBalance', 'SavingsAmount'],
-    description: 'Current account balances with reserved funds'
+    headers: ['Account', 'Amount', 'MaintainBalance', 'SavingsAmount', 'Main'],
+    description: 'Current account balances with reserved funds (mark one account Main=TRUE)'
   },
   Variables: {
     headers: ['Name', 'Value', 'LastUpdated'],
@@ -44,6 +44,10 @@ const SCHEMA = {
   EmergencyFund: {
     headers: [], // Freeform layout - formulas in column B
     description: 'Emergency fund calculator based on monthly salary percentage'
+  },
+  SavingsChecklist: {
+    headers: ['Date', 'Goal Description', 'Amount', 'Account', 'FinalTrackerRow'],
+    description: 'Savings occurrences checklist from FinalTracker'
   }
 };
 
@@ -51,7 +55,7 @@ const SCHEMA = {
 const DEFAULT_LOOKUPS = {
   Category: ['Salary', 'Bonus', 'Groceries', 'Fast Food', 'Restaurant', 'Coffee Shop', 'Convenience Store', 'Food Delivery', 'Transportation', 'Fuel', 'Parking', 'Utilities', 'Entertainment', 'Digital Purchase', 'Shopping', 'Healthcare', 'Insurance', 'Subscription', 'Rent', 'Loan', 'Savings', 'Investment', 'Share', 'Adjustment', 'Other'],
   Mode: ['Cash', 'Bank', 'CreditCard', 'GCash', 'Maya'],
-  Frequency: ['WEEKLY', 'N_DAY_IN_MONTH', 'ANNUAL', 'EVERY_N_DAYS']
+  Frequency: ['WEEKLY', 'N_DAY_IN_MONTH', 'LAST_DAY_OF_MONTH', 'ANNUAL', 'EVERY_N_DAYS']
 };
 
 // Valid values for specific columns (non-lookup values)
@@ -395,6 +399,7 @@ function initLookups() { initializeLookupsSheet(); }
 function initSavingsGoals() { initializeSheet('SavingsGoals'); }
 function initDashboard() { setupDashboard(); }
 function initEmergencyFund() { setupEmergencyFundCalculator(); }
+function initSavingsChecklist() { initializeSheet('SavingsChecklist'); }
 
 // ============================================================================
 // COLUMN MANAGEMENT FUNCTIONS
@@ -623,13 +628,20 @@ function initializeLookupsSheet() {
     const response = ui.alert(
       'Lookups sheet has data',
       'Do you want to overwrite with default values?\n\n' +
-      'This will replace ALL existing lookup values.',
+      'This will replace lookup values in columns A–C. Existing highlight rules in columns E–H will be kept.',
       ui.ButtonSet.YES_NO
     );
     
     if (response !== ui.Button.YES) {
       return false;
     }
+  }
+  
+  // Save existing E–H (highlight rules) before clearing
+  let savedHighlightRules = [];
+  if (lastRow >= 2) {
+    const numDataRows = lastRow - 1;
+    savedHighlightRules = sheet.getRange(2, 5, numDataRows, 4).getValues();
   }
   
   // Clear existing content
@@ -657,15 +669,22 @@ function initializeLookupsSheet() {
     ]);
   }
   
-  // Write data
+  // Write lookup data (columns A–C)
   sheet.getRange(2, 1, data.length, 3).setValues(data);
-  sheet.autoResizeColumns(1, 3);
+  
+  // Restore E–H (highlight rules) without overwriting
+  if (savedHighlightRules.length > 0) {
+    sheet.getRange(2, 5, savedHighlightRules.length, 4).setValues(savedHighlightRules);
+  }
+  
+  sheet.autoResizeColumns(1, 8);
   
   SpreadsheetApp.getUi().alert(
     `✅ Lookups sheet initialized!\n\n` +
     `Categories: ${DEFAULT_LOOKUPS.Category.length}\n` +
     `Modes: ${DEFAULT_LOOKUPS.Mode.length}\n` +
-    `Frequencies: ${DEFAULT_LOOKUPS.Frequency.length}`
+    `Frequencies: ${DEFAULT_LOOKUPS.Frequency.length}\n\n` +
+    `Set highlight rules directly in columns E–H (HighlightColumn, MatchType, MatchValue, HighlightColor).`
   );
   
   return true;
