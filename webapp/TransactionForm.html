@@ -244,11 +244,10 @@
         // Set today's date as default
         document.getElementById('date').valueAsDate = new Date();
         
-        // Load categories from Lookups sheet (will be populated by Apps Script)
-        // For now, add common categories
-        const commonCategories = ['Food', 'Transport', 'Shopping', 'Bills', 'Entertainment', 'Health', 'Other'];
+        // Categories from Lookups sheet (injected server-side so form matches your budget app)
+        const categoriesFromLookups = <?!= JSON.stringify(getCategories()) ?>;
         const categorySelect = document.getElementById('category');
-        commonCategories.forEach(cat => {
+        (categoriesFromLookups || []).forEach(cat => {
             const option = document.createElement('option');
             option.value = cat;
             option.textContent = cat;

@@ -3,6 +3,10 @@
 
 const SPREADSHEET_ID = '1FQzuRQwlFrGGu10N8-ne3HYfbl9tbIoaWA2bqlE6bKo';
 
+// Main budget script web app URL. Deploy the root project (4salarybudget) as a web app and set this
+// so that opening the dashboard triggers updateFinalTracker and refreshes balances.
+const MAIN_SCRIPT_WEB_APP_URL = ''; // e.g. 'https://script.google.com/macros/s/YOUR_MAIN_SCRIPT_DEPLOY_ID/exec'
+
 /**
  * Handle GET requests (for dashboard)
  */
@@ -23,7 +27,14 @@ function doGet(e) {
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   }
   
-  // Default: dashboard
+  // Default: dashboard — trigger updateFinalTracker when user opens dashboard (e.g. back from form)
+  if (MAIN_SCRIPT_WEB_APP_URL) {
+    try {
+      UrlFetchApp.fetch(MAIN_SCRIPT_WEB_APP_URL + '?action=updateFinalTracker', { muteHttpExceptions: true });
+    } catch (err) {
+      // Continue to serve dashboard even if refresh fails
+    }
+  }
   return HtmlService.createTemplateFromFile('Dashboard')
     .evaluate()
     .setTitle('Budget Dashboard')
@@ -174,25 +185,24 @@ function computeCcDueDate(statementDate) {
 }
 
 /**
- * Get categories from Lookups sheet
+ * Get categories from Lookups sheet (column A only; does not touch Highlight section E–H)
  */
 function getCategories() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   const lookupsSheet = ss.getSheetByName('Lookups');
-  
+
   if (!lookupsSheet) {
     return [];
   }
-  
+
   const lastRow = lookupsSheet.getLastRow();
   if (lastRow <= 1) {
     return [];
   }
-  
-  // Assuming categories are in column C (index 2)
-  const categories = lookupsSheet.getRange(2, 3, lastRow - 1, 1).getValues()
+
+  const categories = lookupsSheet.getRange(2, 1, lastRow, 1).getValues()
     .map(row => row[0])
     .filter(cat => cat && cat.toString().trim() !== '');
-  
-  return [...new Set(categories)]; // Remove duplicates
+
+  return [...new Set(categories)];
 }

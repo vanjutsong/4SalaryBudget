@@ -499,6 +499,35 @@ function updateFinalTracker() {
     finalTrackerSheet.getRange(3, RUNNING_BALANCE_COL, formulas.length, 1).setFormulas(formulas);
   }
 
+  // Hide rows above the most recent salary (Category = "Salary" with date <= today), so the sheet opens with that row visible at the top.
+  if (lastRow >= 2) {
+    const dateCol = finalTrackerSheet.getRange(2, 1, lastRow, 1).getValues();   // Column A
+    const categoryCol = finalTrackerSheet.getRange(2, 4, lastRow, 4).getValues(); // Column D (Category)
+    const today = toSafeDate(new Date());
+    let mostRecentSalaryRow = 0;   // 1-based row index
+    let mostRecentSalaryDate = null; // date of that row
+    for (let i = 0; i < dateCol.length; i++) {
+      const rowIndex = i + 2; // 1-based
+      const category = (categoryCol[i][0] || '').toString().trim();
+      const rowDate = toSafeDate(dateCol[i][0]);
+      if (category === 'Salary' && rowDate && rowDate <= today) {
+        if (!mostRecentSalaryDate || rowDate.getTime() > mostRecentSalaryDate.getTime()) {
+          mostRecentSalaryRow = rowIndex;
+          mostRecentSalaryDate = rowDate;
+        }
+      }
+    }
+    // Show all data rows first so we don't leave stale hidden rows, then hide above most recent salary.
+    const numDataRows = lastRow - 1;
+    if (numDataRows > 0) {
+      finalTrackerSheet.showRows(2, numDataRows);
+    }
+    if (mostRecentSalaryRow > 2) {
+      const numRowsToHide = mostRecentSalaryRow - 2;
+      finalTrackerSheet.hideRows(2, numRowsToHide);
+    }
+  }
+
   // Update savings goals calculations (progress and estimated dates / required amounts)
   updateGoalsCalculations(true);
 
@@ -3594,3 +3623,23 @@ function normalizeVariableExpensesCcDates(silent = false) {
     // Copy to clipboard (via alert that user can copy)
     SpreadsheetApp.getUi().alert('Full diagnostics output:\n\n' + fullOutput.substring(0, 20000));
   }
+
+/**
+ * Web app entry point for triggering updateFinalTracker (e.g. when opening dashboard from mobile web app).
+ * Deploy this project as a web app and use ?action=updateFinalTracker to refresh FinalTracker.
+ */
+function doGet(e) {
+  e = e || {};
+  const params = e.parameter || {};
+  if (params.action === 'updateFinalTracker') {
+    try {
+      updateFinalTracker();
+      return ContentService.createTextOutput(JSON.stringify({ success: true }))
+        .setMimeType(ContentService.MimeType.JSON);
+    } catch (err) {
+      return ContentService.createTextOutput(JSON.stringify({ success: false, error: err.toString() }))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+  }
+  return null;
+}

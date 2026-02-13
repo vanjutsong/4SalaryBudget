@@ -637,11 +637,10 @@ function initializeLookupsSheet() {
     }
   }
   
-  // Save existing E–H (highlight rules) before clearing
+  // Save existing E–H (highlight rules) before clearing; do not touch when reinitializing A–C
   let savedHighlightRules = [];
   if (lastRow >= 2) {
-    const numDataRows = lastRow - 1;
-    savedHighlightRules = sheet.getRange(2, 5, numDataRows, 4).getValues();
+    savedHighlightRules = sheet.getRange(2, 5, lastRow, 8).getValues();
   }
   
   // Clear existing content
@@ -669,12 +668,14 @@ function initializeLookupsSheet() {
     ]);
   }
   
-  // Write lookup data (columns A–C)
-  sheet.getRange(2, 1, data.length, 3).setValues(data);
-  
+  // Write lookup data (columns A–C only)
+  const lookupRows = 1 + data.length;
+  sheet.getRange(2, 1, lookupRows, 3).setValues(data);
+
   // Restore E–H (highlight rules) without overwriting
   if (savedHighlightRules.length > 0) {
-    sheet.getRange(2, 5, savedHighlightRules.length, 4).setValues(savedHighlightRules);
+    const highlightEndRow = 1 + savedHighlightRules.length;
+    sheet.getRange(2, 5, highlightEndRow, 8).setValues(savedHighlightRules);
   }
   
   sheet.autoResizeColumns(1, 8);
@@ -713,9 +714,10 @@ function getLookupValues() {
   if (lastRow < 2) {
     return DEFAULT_LOOKUPS;
   }
-  
-  const data = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
-  
+
+  // Read only columns A–C (Category, Mode, Frequency); do not touch E–H (Highlight section)
+  const data = sheet.getRange(2, 1, lastRow, 3).getValues();
+
   data.forEach(row => {
     if (row[0] && row[0].toString().trim()) result.Category.push(row[0].toString().trim());
     if (row[1] && row[1].toString().trim()) result.Mode.push(row[1].toString().trim());
@@ -799,25 +801,25 @@ function setupDropdownsForSheet(sheetName) {
       .requireValueInList(lookups.Mode, true)
       .setAllowInvalid(true)
       .build();
-    sheet.getRange(2, config.Mode, lastRow - 1, 1).setDataValidation(modeRule);
+    sheet.getRange(2, config.Mode, lastRow, config.Mode).setDataValidation(modeRule);
     appliedCount++;
   }
-  
+
   if (config.Category) {
     const categoryRule = SpreadsheetApp.newDataValidation()
       .requireValueInList(lookups.Category, true)
       .setAllowInvalid(true) // Allow typing custom values
       .build();
-    sheet.getRange(2, config.Category, lastRow - 1, 1).setDataValidation(categoryRule);
+    sheet.getRange(2, config.Category, lastRow, config.Category).setDataValidation(categoryRule);
     appliedCount++;
   }
-  
+
   if (config.Frequency) {
     const frequencyRule = SpreadsheetApp.newDataValidation()
       .requireValueInList(lookups.Frequency, true)
       .setAllowInvalid(false) // Frequency must be from list
       .build();
-    sheet.getRange(2, config.Frequency, lastRow - 1, 1).setDataValidation(frequencyRule);
+    sheet.getRange(2, config.Frequency, lastRow, config.Frequency).setDataValidation(frequencyRule);
     appliedCount++;
   }
   
@@ -827,7 +829,7 @@ function setupDropdownsForSheet(sheetName) {
       .requireValueInList(['allotment', 'deadline'], true)
       .setAllowInvalid(false)
       .build();
-    sheet.getRange(2, config.GoalMode, lastRow - 1, 1).setDataValidation(goalModeRule);
+    sheet.getRange(2, config.GoalMode, lastRow, config.GoalMode).setDataValidation(goalModeRule);
     appliedCount++;
   }
   
@@ -836,7 +838,7 @@ function setupDropdownsForSheet(sheetName) {
       .requireValueInList(['TRUE', 'FALSE'], true)
       .setAllowInvalid(false)
       .build();
-    sheet.getRange(2, config.Active, lastRow - 1, 1).setDataValidation(activeRule);
+    sheet.getRange(2, config.Active, lastRow, config.Active).setDataValidation(activeRule);
     appliedCount++;
   }
   
@@ -857,7 +859,7 @@ function setupDropdownsForSheet(sheetName) {
         .requireValueInList(accountNames, true)
         .setAllowInvalid(true)  // Allow empty or custom
         .build();
-      sheet.getRange(2, config.Account, lastRow - 1, 1).setDataValidation(accountRule);
+      sheet.getRange(2, config.Account, lastRow, config.Account).setDataValidation(accountRule);
       appliedCount++;
     }
   }
