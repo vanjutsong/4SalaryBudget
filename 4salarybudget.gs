@@ -164,10 +164,10 @@ function updateFinalTracker() {
 
   const today = toSafeDate(new Date());
   
-  // Ensure headers are set correctly (9 columns including Edited)
-  const headers = ['Date', 'Description', 'Mode', 'Category', 'Income', 'Debits', 'CCTransactionDate', 'RunningBalance', 'Edited'];
-  finalTrackerSheet.getRange(1, 1, 1, 9).setValues([headers]);
-  finalTrackerSheet.getRange(1, 1, 1, 9).setFontWeight('bold');
+  // Ensure headers are set correctly (10 columns including Edited and Applied)
+  const headers = ['Date', 'Description', 'Mode', 'Category', 'Income', 'Debits', 'CCTransactionDate', 'RunningBalance', 'Edited', 'Applied'];
+  finalTrackerSheet.getRange(1, 1, 1, 10).setValues([headers]);
+  finalTrackerSheet.getRange(1, 1, 1, 10).setFontWeight('bold');
 
   // Check if row 2 is the "Starting Balance" row
   const finalLastRow = finalTrackerSheet.getLastRow();
@@ -181,8 +181,8 @@ function updateFinalTracker() {
   let existingStartingBalanceRow = null;
   
   if (finalLastRow >= 2) {
-    // Read all 9 columns (or as many as exist)
-    const numCols = Math.min(finalTrackerSheet.getLastColumn(), 9);
+    // Read up to 10 columns so Applied (column J) is preserved when present
+    const numCols = Math.min(finalTrackerSheet.getLastColumn(), 10);
     const existingData = finalTrackerSheet.getRange(2, 1, finalLastRow - 1, numCols).getValues();
     
     existingData.forEach((row, idx) => {
@@ -190,6 +190,7 @@ function updateFinalTracker() {
       const description = row[1];
       const runningBalance = row[7] || ''; // Column H
       const edited = row[8]; // Column I (Edited)
+      // row[9] = Applied (column J) - preserved when present
       
       // Preserve Starting Balance row
       if (description === 'Starting Balance') {
@@ -207,8 +208,8 @@ function updateFinalTracker() {
       const isEdited = edited === true || edited === 'TRUE' || edited === true || edited === 1;
       
       if (isPast || isEdited) {
-        // Preserve this row (ensure it has 9 columns)
-        while (row.length < 9) row.push('');
+        // Preserve this row (ensure it has 10 columns including Applied)
+        while (row.length < 10) row.push('');
         preservedRows.push(row);
       }
     });
@@ -218,7 +219,7 @@ function updateFinalTracker() {
   // Used to suppress the matching recurring instance and avoid duplicates (e.g. Salary B moved to next day)
   const editedPreserved = [];
   preservedRows.forEach(preserved => {
-    const edited = preserved[8];
+    const edited = preserved[8]; // Column I (Edited)
     const isEdited = edited === true || edited === 'TRUE' || edited === 'true' || edited === 1;
     if (!isEdited) return;
     const d = toSafeDate(preserved[0]);
@@ -239,10 +240,11 @@ function updateFinalTracker() {
   allRecurringTransactions.forEach(row => {
     const rowDate = toSafeDate(row[0]);
     if (rowDate && rowDate >= today) {
-      // Add empty columns for RunningBalance and Edited (will be set by formulas/user)
+      // Add empty columns for RunningBalance, Edited, and Applied (will be set by formulas/user)
       while (row.length < 7) row.push('');
       row.push(''); // RunningBalance (column 8) - will be set by formula
       row.push(''); // Edited (column 9) - empty by default
+      row.push(''); // Applied (column 10) - empty by default
       futureRecurringRaw.push(row);
     }
   });
@@ -313,6 +315,7 @@ function updateFinalTracker() {
           while (row.length < 7) row.push('');
           row.push(''); // RunningBalance
           row.push(''); // Edited
+          row.push(''); // Applied (column J)
           variableRaw.push(row);
         }
       }
@@ -372,6 +375,7 @@ function updateFinalTracker() {
       while (row.length < 7) row.push('');
       row.push(''); // RunningBalance
       row.push(''); // Edited
+      row.push(''); // Applied (column J)
       futureSavingsGoalsRaw.push(row);
     }
   });
@@ -458,14 +462,15 @@ function updateFinalTracker() {
   // Write Starting Balance row if it existed
   let writeRow = 2;
   if (existingStartingBalanceRow) {
-    while (existingStartingBalanceRow.length < 9) existingStartingBalanceRow.push('');
-    // Write columns 1-7 and 9 separately to preserve RunningBalance formula
+    while (existingStartingBalanceRow.length < 10) existingStartingBalanceRow.push('');
+    // Write columns 1-7, 9 (Edited), and 10 (Applied) separately to preserve RunningBalance formula (column 8)
     finalTrackerSheet.getRange(2, 1, 1, 7).setValues([existingStartingBalanceRow.slice(0, 7)]);
     finalTrackerSheet.getRange(2, 9, 1, 1).setValues([[existingStartingBalanceRow[8] || '']]);
+    finalTrackerSheet.getRange(2, 10, 1, 1).setValues([[existingStartingBalanceRow[9] || '']]);
     writeRow = 3;
   }
 
-  // Write all transactions (columns 1-7 and 9, preserve column 8 RunningBalance)
+  // Write all transactions (columns 1-7, 9 Edited, 10 Applied; preserve column 8 RunningBalance)
   if (allTransactions.length > 0) {
     // Extract columns 1-7 (Date through CCTransactionDate)
     const dataColumns1to7 = allTransactions.map(row => row.slice(0, 7));
@@ -474,10 +479,25 @@ function updateFinalTracker() {
     // Extract column 9 (Edited)
     const dataColumn9 = allTransactions.map(row => [row[8] || '']);
     finalTrackerSheet.getRange(writeRow, 9, allTransactions.length, 1).setValues(dataColumn9);
+    
+    // Extract column 10 (Applied)
+    const dataColumn10 = allTransactions.map(row => [row[9] || '']);
+    finalTrackerSheet.getRange(writeRow, 10, allTransactions.length, 1).setValues(dataColumn10);
   }
 
   // Highlight Salary rows yellow
   highlightRows(finalTrackerSheet, writeRow, allTransactions);
+
+  // Ensure Running Balance formulas extend to the last row (column H). Do not touch row 2 (Starting Balance) — that is only set during initial setup / hard reset.
+  const RUNNING_BALANCE_COL = 8;
+  const lastRow = finalTrackerSheet.getLastRow();
+  if (lastRow >= 3) {
+    const formulas = [];
+    for (let r = 3; r <= lastRow; r++) {
+      formulas.push([`=H${r - 1}+E${r}-F${r}`]);
+    }
+    finalTrackerSheet.getRange(3, RUNNING_BALANCE_COL, formulas.length, 1).setFormulas(formulas);
+  }
 
   // Update savings goals calculations (progress and estimated dates / required amounts)
   updateGoalsCalculations(true);
@@ -497,8 +517,8 @@ function updateFinalTracker() {
     `New savings goals (future): ${newSavingsGoalsCount}\n` +
     `Total: ${allTransactions.length} transactions.\n\n` +
     (existingStartingBalanceRow ? `Starting Balance row preserved.\n` : '') +
-    `Goals calculations updated.\n\n` +
-    `Remember to run "Setup Running Balance" to update formulas.`;
+    `Running Balance formulas updated to last row.\n\n` +
+    `Goals calculations updated.`;
 
   SpreadsheetApp.getUi().alert(message);
 }
@@ -2649,7 +2669,7 @@ function normalizeVariableExpensesCcDates(silent = false) {
       [''], // Row 11: blank
       ['=IFERROR(INDEX(FinalTracker!H:H, MATCH(B3, FinalTracker!A:A, 0)), INDEX(FinalTracker!H:H, MATCH("Starting Balance", FinalTracker!B:B, 0)))'], // Row 12: Starting Balance (fallback to Starting Balance row)
       ['=SUMPRODUCT(CurrentBalance!B2:B) - SUMPRODUCT(CurrentBalance!C2:C) - SUMPRODUCT(CurrentBalance!D2:D)'], // Row 13: Current Balance
-      ['=IFERROR(SUMIFS(VariableExpenses!F2:F10000, VariableExpenses!A2:A10000, ">="&B3, VariableExpenses!A2:A10000, "<="&TODAY(), VariableExpenses!C2:C10000, "<>CreditCard"), 0)'], // Row 14: Actual Spent = VariableExpenses debits this cycle, excluding CreditCard
+      ['=IFERROR(SUMIFS(VariableExpenses!F2:F10000, VariableExpenses!A2:A10000, ">="&B3, VariableExpenses!A2:A10000, "<="&TODAY(), VariableExpenses!C2:C10000, "<>CreditCard", VariableExpenses!D2:D10000, "<>Adjustment", VariableExpenses!D2:D10000, "<>Loan"), 0)'], // Row 14: Actual Spent = VariableExpenses debits this cycle, excluding CreditCard, Adjustment, Loan
       [''], // Row 15: blank
       ['=IFERROR(IF(ABS(B13 - INDEX(FinalTracker!H:H, MAX(ARRAYFORMULA(IF((ISNUMBER(FinalTracker!A2:A10000))*(INT(FinalTracker!A2:A10000)<=INT(TODAY())), ROW(FinalTracker!A2:A10000), 0))))) < 0.01, "Reconciled", "Not Reconciled: " & TEXT(B13 - INDEX(FinalTracker!H:H, MAX(ARRAYFORMULA(IF((ISNUMBER(FinalTracker!A2:A10000))*(INT(FinalTracker!A2:A10000)<=INT(TODAY())), ROW(FinalTracker!A2:A10000), 0)))), "+#,##0.00;-#,##0.00")), "Not Reconciled: N/A")'], // Row 16: Reconciliation Status - INDEX/MAX/ARRAYFORMULA to get LAST valid date entry (A2:A10000 covers up to 10,000 rows, data already sorted by updateFinalTracker)
       [''], // Row 17: first blank spacing
@@ -2662,7 +2682,7 @@ function normalizeVariableExpensesCcDates(silent = false) {
       [''], // Row 24: blank (title row, no formula)
       ['=IFERROR(B8 * 7 / B5, "")'], // Row 25: Weekly Rate = Projected / (Total Days / 7) - value in B25
       [''], // Row 26: blank space
-      ['=IFERROR(B25 * (B6 / 7) - B14, "")'], // Row 27: Current Week Budget - numeric only
+      ['=IFERROR(B25 * (B6 + MOD(8 - WEEKDAY(TODAY()), 7)) / 7 - B14, "")'], // Row 27: Current Week Budget through Sunday (like Tomorrow/Day After)
       ['=IFERROR(B25 * ((B6 / 7) + 1) - B14, "")'] // Row 28: Next Week Budget - numeric only
     ];
     
