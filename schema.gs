@@ -34,7 +34,7 @@ const SCHEMA = {
     description: 'Dropdown values and highlight configuration'
   },
   SavingsGoals: {
-    headers: ['Description', 'TargetAmount', 'Frequency', 'Day', 'Mode', 'AllotmentAmount', 'TargetDate', 'CurrentProgress', 'Calculated', 'Active', 'Account'],
+    headers: ['Description', 'TargetAmount', 'Frequency', 'Day', 'Mode', 'AllotmentAmount', 'TargetDate', 'CurrentProgress', 'Calculated', 'Active', 'Account', 'StartDate'],
     description: 'Savings goals with allotment or deadline tracking, optionally linked to account'
   },
   Dashboard: {
@@ -796,12 +796,15 @@ function setupDropdownsForSheet(sheetName) {
   // Apply dropdowns to correct columns
   let appliedCount = 0;
   
+  // getRange(row, column, numRows, numColumns) - 3rd/4th are count of rows/columns, not end row/col
+  const numRows = lastRow - 1;  // rows 2 to lastRow inclusive
+
   if (config.Mode) {
     const modeRule = SpreadsheetApp.newDataValidation()
       .requireValueInList(lookups.Mode, true)
       .setAllowInvalid(true)
       .build();
-    sheet.getRange(2, config.Mode, lastRow, config.Mode).setDataValidation(modeRule);
+    sheet.getRange(2, config.Mode, numRows, 1).setDataValidation(modeRule);
     appliedCount++;
   }
 
@@ -810,7 +813,7 @@ function setupDropdownsForSheet(sheetName) {
       .requireValueInList(lookups.Category, true)
       .setAllowInvalid(true) // Allow typing custom values
       .build();
-    sheet.getRange(2, config.Category, lastRow, config.Category).setDataValidation(categoryRule);
+    sheet.getRange(2, config.Category, numRows, 1).setDataValidation(categoryRule);
     appliedCount++;
   }
 
@@ -819,7 +822,7 @@ function setupDropdownsForSheet(sheetName) {
       .requireValueInList(lookups.Frequency, true)
       .setAllowInvalid(false) // Frequency must be from list
       .build();
-    sheet.getRange(2, config.Frequency, lastRow, config.Frequency).setDataValidation(frequencyRule);
+    sheet.getRange(2, config.Frequency, numRows, 1).setDataValidation(frequencyRule);
     appliedCount++;
   }
   
@@ -829,7 +832,7 @@ function setupDropdownsForSheet(sheetName) {
       .requireValueInList(['allotment', 'deadline'], true)
       .setAllowInvalid(false)
       .build();
-    sheet.getRange(2, config.GoalMode, lastRow, config.GoalMode).setDataValidation(goalModeRule);
+    sheet.getRange(2, config.GoalMode, numRows, 1).setDataValidation(goalModeRule);
     appliedCount++;
   }
   
@@ -838,7 +841,7 @@ function setupDropdownsForSheet(sheetName) {
       .requireValueInList(['TRUE', 'FALSE'], true)
       .setAllowInvalid(false)
       .build();
-    sheet.getRange(2, config.Active, lastRow, config.Active).setDataValidation(activeRule);
+    sheet.getRange(2, config.Active, numRows, 1).setDataValidation(activeRule);
     appliedCount++;
   }
   
@@ -859,7 +862,7 @@ function setupDropdownsForSheet(sheetName) {
         .requireValueInList(accountNames, true)
         .setAllowInvalid(true)  // Allow empty or custom
         .build();
-      sheet.getRange(2, config.Account, lastRow, config.Account).setDataValidation(accountRule);
+      sheet.getRange(2, config.Account, numRows, 1).setDataValidation(accountRule);
       appliedCount++;
     }
   }

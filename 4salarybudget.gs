@@ -6,6 +6,61 @@ const SPREADSHEET_ID = '1FQzuRQwlFrGGu10N8-ne3HYfbl9tbIoaWA2bqlE6bKo';
  * Returns an array of transactions (does NOT write to any sheet)
  * Used by generateRecurring() and duplicate checking
  */
+function parseGoalDateValue(value) {
+  if (value === null || value === undefined || value === '') return null;
+
+  if (value instanceof Date) {
+    return toSafeDate(value);
+  }
+
+  if (typeof value === 'number') {
+    if (!isFinite(value)) return null;
+    // Support Google Sheets serial date values as a safe fallback.
+    if (value > 30000 && value < 80000) {
+      const epoch = new Date(1899, 11, 30, 12, 0, 0, 0);
+      epoch.setDate(epoch.getDate() + Math.floor(value));
+      return toSafeDate(epoch);
+    }
+    return null;
+  }
+
+  return toSafeDate(value);
+}
+
+function resolveGoalDateWindow(goalRow, today, options) {
+  const opts = options || {};
+  const mode = (goalRow[4] || '').toString().trim().toLowerCase();
+  const startDate = parseGoalDateValue(goalRow[11]); // L: StartDate
+  const targetDate = parseGoalDateValue(goalRow[6]); // G: TargetDate
+  const calculatedDate = parseGoalDateValue(goalRow[8]); // I: Calculated
+
+  let endDate = null;
+  if (mode === 'deadline') {
+    endDate = targetDate;
+  } else if (mode === 'allotment') {
+    endDate = calculatedDate;
+  }
+
+  let effectiveStartDate = startDate ? new Date(startDate) : null;
+  if (!effectiveStartDate && opts.fallbackStartToToday && today) {
+    effectiveStartDate = toSafeDate(today);
+  }
+
+  if (effectiveStartDate && opts.clampStartToToday && today) {
+    const todaySafe = toSafeDate(today);
+    if (effectiveStartDate < todaySafe) {
+      effectiveStartDate = todaySafe;
+    }
+  }
+
+  return {
+    mode,
+    startDate,
+    endDate,
+    effectiveStartDate
+  };
+}
+
 /**
  * Generate savings goal transactions from SavingsGoals sheet
  * Creates recurring transactions based on Frequency, Day, and AllotmentAmount
@@ -15,14 +70,14 @@ function generateSavingsGoalsTransactions(savingsGoalsSheet, accountSavingsMap) 
   
   if (!savingsGoalsSheet || savingsGoalsSheet.getLastRow() <= 1) return transactions;
   
-  // Read all 11 columns
-  const data = savingsGoalsSheet.getRange(2, 1, savingsGoalsSheet.getLastRow() - 1, 11).getValues();
+  // Read all 12 columns (A-L, includes StartDate in L)
+  const data = savingsGoalsSheet.getRange(2, 1, savingsGoalsSheet.getLastRow() - 1, 12).getValues();
   
   // Get date range (today to 1 year from now, or use a reasonable default)
   const today = new Date();
   today.setHours(12, 0, 0, 0);
-  const endDate = new Date(today);
-  endDate.setFullYear(endDate.getFullYear() + 1);
+  const planningEndDate = new Date(today);
+  planningEndDate.setFullYear(planningEndDate.getFullYear() + 1);
   
   data.forEach(row => {
     const description = row[0];
@@ -31,7 +86,7 @@ function generateSavingsGoalsTransactions(savingsGoalsSheet, accountSavingsMap) 
     const day = row[3];
     const goalMode = (row[4] || '').toString().toLowerCase(); // allotment or deadline
     const allotmentAmount = Number(row[5]) || 0;
-    const targetDate = row[6];
+    const targetDate = parseGoalDateValue(row[6]);
     let currentProgress = Number(row[7]) || 0;
     // Handle various Active formats
     const activeValue = row[9];
@@ -40,6 +95,16 @@ function generateSavingsGoalsTransactions(savingsGoalsSheet, accountSavingsMap) 
     
     // Skip if not active or no description
     if (!isActive || !description) return;
+
+    const goalWindow = resolveGoalDateWindow(row, today, { fallbackStartToToday: true });
+    const hasStartDate = !!goalWindow.startDate;
+    const windowStartDate = goalWindow.effectiveStartDate || toSafeDate(today);
+    // Backward compatibility: if StartDate is blank, keep legacy open planning horizon behavior.
+    let windowEndDate = hasStartDate && goalWindow.endDate ? new Date(goalWindow.endDate) : new Date(planningEndDate);
+    if (windowEndDate > planningEndDate) {
+      windowEndDate = new Date(planningEndDate);
+    }
+    if (windowEndDate < windowStartDate) return;
     
     // If account is linked, use account's SavingsAmount as initial progress
     if (linkedAccount && accountSavingsMap && accountSavingsMap[linkedAccount] !== undefined) {
@@ -52,7 +117,7 @@ function generateSavingsGoalsTransactions(savingsGoalsSheet, accountSavingsMap) 
       // Calculate amount per occurrence from deadline
       const remaining = targetAmount - currentProgress;
       if (remaining <= 0) return;
-      const occurrences = countOccurrences(today, new Date(targetDate), frequency, day);
+      const occurrences = countOccurrences(windowStartDate, targetDate, frequency, day);
       if (occurrences > 0) {
         amountPerOccurrence = remaining / occurrences;
       }
@@ -65,7 +130,7 @@ function generateSavingsGoalsTransactions(savingsGoalsSheet, accountSavingsMap) 
     if (currentProgress >= targetAmount) return;
     
     // Generate dates based on frequency
-    const dates = generateDates(frequency, day, null, today, endDate);
+    const dates = generateDates(frequency, day, null, windowStartDate, windowEndDate);
     
     // Calculate how many transactions until goal is reached
     const remaining = targetAmount - currentProgress;
@@ -216,7 +281,7 @@ function updateFinalTracker() {
   }
 
   // Build edited-preserved list: preserved rows with Edited=TRUE (user changed date/amount etc.)
-  // Used to suppress the matching recurring instance and avoid duplicates (e.g. Salary B moved to next day)
+  // Used to suppress the matching recurring instance and avoid duplicates (e.g. Salary moved to next day)
   const editedPreserved = [];
   preservedRows.forEach(preserved => {
     const edited = preserved[8]; // Column I (Edited)
@@ -530,6 +595,9 @@ function updateFinalTracker() {
 
   // Update savings goals calculations (progress and estimated dates / required amounts)
   updateGoalsCalculations(true);
+  
+  // Refresh savings checklist after FinalTracker is rebuilt
+  const checklistCount = generateSavingsChecklist(true);
 
   // Count stats
   const preservedCount = preservedRows.length;
@@ -547,7 +615,8 @@ function updateFinalTracker() {
     `Total: ${allTransactions.length} transactions.\n\n` +
     (existingStartingBalanceRow ? `Starting Balance row preserved.\n` : '') +
     `Running Balance formulas updated to last row.\n\n` +
-    `Goals calculations updated.`;
+    `Goals calculations updated.\n` +
+    `Savings checklist refreshed: ${checklistCount} item(s).`;
 
   SpreadsheetApp.getUi().alert(message);
 }
@@ -2247,8 +2316,8 @@ function normalizeVariableExpensesCcDates(silent = false) {
       return;
     }
     
-    // Read goals (columns A-K, including Account)
-    const goalsData = goalsSheet.getRange(2, 1, goalsLastRow - 1, 11).getValues();
+    // Read goals (columns A-L, including Account and StartDate)
+    const goalsData = goalsSheet.getRange(2, 1, goalsLastRow - 1, 12).getValues();
     
     // Build account savings map from CurrentBalance
     const accountSavings = {};
@@ -2274,10 +2343,17 @@ function normalizeVariableExpensesCcDates(silent = false) {
     // Calculate progress for each goal
     const progressUpdates = [];
     
+    const today = toSafeDate(new Date());
+
     goalsData.forEach((goal, idx) => {
       const goalDescription = (goal[0] || '').toString().trim().toLowerCase();
       const isActive = goal[9] === true || goal[9] === 'TRUE' || goal[9] === 1;
       const linkedAccount = (goal[10] || '').toString().trim().toLowerCase();
+      const goalWindow = resolveGoalDateWindow(goal, today, { fallbackStartToToday: false });
+      const hasStartDate = !!goalWindow.startDate;
+      const startDateFilter = hasStartDate ? goalWindow.startDate : null;
+      // Backward compatibility: only apply end-date filtering when StartDate is set.
+      const endDateFilter = hasStartDate ? goalWindow.endDate : null;
       
       if (!goalDescription || !isActive) {
         progressUpdates.push([goal[7] || 0]); // Keep existing progress
@@ -2292,10 +2368,15 @@ function normalizeVariableExpensesCcDates(silent = false) {
       } else {
         // Otherwise, sum transactions where Category = "Savings" and Description contains goal name
         ftData.forEach(tx => {
+          const txDate = toSafeDate(tx[0]);
           const txDescription = (tx[1] || '').toString().toLowerCase();
           const txCategory = (tx[3] || '').toString().toLowerCase();
           const txIncome = Number(tx[4]) || 0;
           const txDebit = Number(tx[5]) || 0;
+
+          if (!txDate) return;
+          if (startDateFilter && txDate < startDateFilter) return;
+          if (endDateFilter && txDate > endDateFilter) return;
           
           // Check if this transaction is for this goal
           if (txCategory === 'savings' && txDescription.includes(goalDescription)) {
@@ -2340,7 +2421,7 @@ function normalizeVariableExpensesCcDates(silent = false) {
     calculateGoalProgress();
     
     // Re-read goals with updated progress
-    const goalsData = goalsSheet.getRange(2, 1, goalsLastRow - 1, 11).getValues();
+    const goalsData = goalsSheet.getRange(2, 1, goalsLastRow - 1, 12).getValues();
     
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -2354,9 +2435,14 @@ function normalizeVariableExpensesCcDates(silent = false) {
       const day = goal[3]; // Keep as-is to support "15, 28" format
       const mode = (goal[4] || '').toString().toLowerCase();
       const allotmentAmount = Number(goal[5]) || 0;
-      const targetDate = goal[6] ? new Date(goal[6]) : null;
+      const targetDate = parseGoalDateValue(goal[6]);
       const currentProgress = Number(goal[7]) || 0;
       const isActive = goal[9] === true || goal[9] === 'TRUE' || goal[9] === 1;
+      const goalWindow = resolveGoalDateWindow(goal, today, {
+        fallbackStartToToday: true,
+        clampStartToToday: true
+      });
+      const calcStartDate = goalWindow.effectiveStartDate || today;
       
       if (!description || !isActive || targetAmount <= 0) {
         calculatedUpdates.push(['']);
@@ -2373,11 +2459,11 @@ function normalizeVariableExpensesCcDates(silent = false) {
       if (mode === 'allotment' && allotmentAmount > 0) {
         // Calculate estimated completion date
         const occurrencesNeeded = Math.ceil(remaining / allotmentAmount);
-        const estimatedDate = calculateFutureDate(today, frequency, day, occurrencesNeeded);
+        const estimatedDate = calculateFutureDate(calcStartDate, frequency, day, occurrencesNeeded);
         calculatedUpdates.push([estimatedDate ? Utilities.formatDate(estimatedDate, Session.getScriptTimeZone(), 'yyyy-MM-dd') : 'Unable to calculate']);
       } else if (mode === 'deadline' && targetDate) {
         // Calculate required amount per occurrence
-        const occurrencesUntilDeadline = countOccurrences(today, targetDate, frequency, day);
+        const occurrencesUntilDeadline = countOccurrences(calcStartDate, targetDate, frequency, day);
         if (occurrencesUntilDeadline > 0) {
           const requiredPerOccurrence = remaining / occurrencesUntilDeadline;
           calculatedUpdates.push([requiredPerOccurrence.toFixed(2) + ' per occurrence']);
@@ -2579,7 +2665,7 @@ function normalizeVariableExpensesCcDates(silent = false) {
     calculateGoalProgress();
     
     // Re-read goals
-    const goalsData = goalsSheet.getRange(2, 1, goalsLastRow - 1, 11).getValues();
+    const goalsData = goalsSheet.getRange(2, 1, goalsLastRow - 1, 12).getValues();
     
     let message = '=== SAVINGS GOALS SUMMARY ===\n\n';
     let totalTarget = 0;
@@ -2687,8 +2773,8 @@ function normalizeVariableExpensesCcDates(silent = false) {
     const formulas = [
       [''], // Row 1: title
       [''], // Row 2: blank
-      ['=IFERROR(LARGE(FILTER(FinalTracker!A:A, FinalTracker!B:B="Salary B", FinalTracker!A:A<=TODAY()), 1), INDEX(FinalTracker!A:A, MATCH("Starting Balance", FinalTracker!B:B, 0)))'], // Row 3: Cycle 1 Start (fallback to Starting Balance date)
-      ['=SMALL(FILTER(FinalTracker!A:A, FinalTracker!B:B="Salary B", FinalTracker!A:A>TODAY()), 2) - 1'], // Row 4: Target Date
+      ['=IFERROR(LARGE(FILTER(FinalTracker!A:A, FinalTracker!B:B="Salary A", FinalTracker!A:A<=TODAY()), 1), INDEX(FinalTracker!A:A, MATCH("Starting Balance", FinalTracker!B:B, 0)))'], // Row 3: Cycle 1 Start (fallback to Starting Balance date)
+      ['=SMALL(FILTER(FinalTracker!A:A, FinalTracker!B:B="Salary A", FinalTracker!A:A>TODAY()), 2) - 1'], // Row 4: Target Date
       ['=IFERROR(B4 - B3 + 1, "")'], // Row 5: Total Days
       ['=IFERROR(TODAY() - B3 + 1, "")'], // Row 6: Days Elapsed
       [''], // Row 7: blank
@@ -2800,11 +2886,11 @@ function normalizeVariableExpensesCcDates(silent = false) {
     dashboardSheet.setColumnWidth(2, 150);
     
     // ============================================================================
-    // SAVINGS GOALS DASHBOARD (Columns D-G)
+    // SAVINGS GOALS DASHBOARD (Columns D-H)
     // ============================================================================
     
     // Title row (row 1)
-    dashboardSheet.getRange(1, 4, 1, 4).merge().setValue('SAVINGS GOALS').setFontWeight('bold').setFontSize(14).setHorizontalAlignment('center');
+    dashboardSheet.getRange(1, 4, 1, 5).merge().setValue('SAVINGS GOALS').setFontWeight('bold').setFontSize(14).setHorizontalAlignment('center');
     
     // Row 2 is empty (spacing)
     
@@ -2813,6 +2899,7 @@ function normalizeVariableExpensesCcDates(silent = false) {
     dashboardSheet.getRange(3, 5, 1, 1).setValue('Progress %').setFontWeight('bold');
     dashboardSheet.getRange(3, 6, 1, 1).setValue('Progress Bar').setFontWeight('bold');
     dashboardSheet.getRange(3, 7, 1, 1).setValue('Date of Completion').setFontWeight('bold');
+    dashboardSheet.getRange(3, 8, 1, 1).setValue('Time to completion').setFontWeight('bold');
     
     // Array formulas to get active savings goals starting from row 4
     // Column D: Description (filter active goals)
@@ -2831,14 +2918,31 @@ function normalizeVariableExpensesCcDates(silent = false) {
     // We'll format as date, so non-date text will show as error - but that's acceptable
     const completionDateFormula = '=ARRAYFORMULA(IF(ISBLANK(D4:D), "", IF(FILTER(SavingsGoals!G2:G, SavingsGoals!J2:J=TRUE, SavingsGoals!A2:A<>"")<>"", FILTER(SavingsGoals!G2:G, SavingsGoals!J2:J=TRUE, SavingsGoals!A2:A<>""), FILTER(SavingsGoals!I2:I, SavingsGoals!J2:J=TRUE, SavingsGoals!A2:A<>""))))';
     
+    // Column H: Time from now to date of completion ("1 year, 2 months and 3 days"); "Completed" if past; blank if no date. Per-row formula (no ARRAYFORMULA) to avoid #ERROR!
+    const timeToCompletionFormulaRow4 = '=IF(ISBLANK(G4), "", IF(G4<TODAY(), "Completed", IFERROR(TRIM(IF(DATEDIF(TODAY(), G4, "Y")>0, DATEDIF(TODAY(), G4, "Y")&" year"&IF(DATEDIF(TODAY(), G4, "Y")=1,"","s")&", ", "")&IF(DATEDIF(TODAY(), G4, "YM")>0, DATEDIF(TODAY(), G4, "YM")&" month"&IF(DATEDIF(TODAY(), G4, "YM")=1,"","s"), "")&IF((DATEDIF(TODAY(), G4, "MD")>0)*((DATEDIF(TODAY(), G4, "Y")>0)+(DATEDIF(TODAY(), G4, "YM")>0)), " and ", "")&IF(DATEDIF(TODAY(), G4, "MD")>0, DATEDIF(TODAY(), G4, "MD")&" day"&IF(DATEDIF(TODAY(), G4, "MD")=1,"","s"), "")), "")))';
+    
+    // Count active savings goals to fill H only from row 4 to last data row + 5
+    const savingsGoalsSheet = ss.getSheetByName('SavingsGoals');
+    let lastDataRow = 3;
+    if (savingsGoalsSheet) {
+      const descCol = savingsGoalsSheet.getRange(2, 1, Math.max(savingsGoalsSheet.getLastRow(), 2), 1).getValues();
+      const activeCol = savingsGoalsSheet.getRange(2, 10, Math.max(savingsGoalsSheet.getLastRow(), 2), 10).getValues(); // J = 10
+      const activeCount = descCol.reduce(function (n, row, i) { return (activeCol[i][0] === true && row[0] !== '') ? n + 1 : n; }, 0);
+      lastDataRow = 3 + activeCount;
+    }
+    const fillToRow = lastDataRow + 5;
+    const numRows = Math.max(1, fillToRow - 4 + 1);
+    
     // Apply array formulas starting from row 4
     dashboardSheet.getRange(4, 4, 1, 1).setFormula(descriptionFormula);
     dashboardSheet.getRange(4, 5, 1, 1).setFormula(progressPercentFormula);
     dashboardSheet.getRange(4, 6, 1, 1).setFormula(progressBarFormula);
     dashboardSheet.getRange(4, 7, 1, 1).setFormula(completionDateFormula);
+    dashboardSheet.getRange(4, 8, 1, 1).setFormula(timeToCompletionFormulaRow4);
+    dashboardSheet.getRange(4, 8, 1, 1).copyTo(dashboardSheet.getRange(4, 8, numRows, 1), SpreadsheetApp.CopyPasteType.PASTE_FORMULA, false);
     
     // Formatting for Savings Goals section
-    dashboardSheet.getRange(3, 4, 1, 4).setFontWeight('bold').setBackground('#E8E8E8');
+    dashboardSheet.getRange(3, 4, 1, 5).setFontWeight('bold').setBackground('#E8E8E8');
     dashboardSheet.getRange(4, 5, 48, 1).setNumberFormat('0.0%'); // Progress Percentage as percentage
     dashboardSheet.getRange(4, 6, 48, 1).setFontFamily('Courier New'); // Monospace font for progress bar
     dashboardSheet.getRange(4, 7, 48, 1).setNumberFormat('yyyy-mm-dd'); // Date format
@@ -2848,7 +2952,60 @@ function normalizeVariableExpensesCcDates(silent = false) {
     dashboardSheet.setColumnWidth(5, 100); // Progress %
     dashboardSheet.setColumnWidth(6, 250); // Progress Bar
     dashboardSheet.setColumnWidth(7, 150); // Date of Completion
-    
+    dashboardSheet.setColumnWidth(8, 180); // Time to completion
+
+    // ============================================================================
+    // SPENDING BY CATEGORY (BY MONTH) - Column J
+    // ============================================================================
+
+    // Row 1: merged header (J1:K1)
+    dashboardSheet.getRange(1, 10, 1, 2).merge().setValue('SPENDING BY CATEGORY (BY MONTH)').setFontWeight('bold').setFontSize(14).setHorizontalAlignment('center');
+
+    // Row 2: blank (no content)
+    dashboardSheet.getRange(2, 10, 1, 2).clearContent();
+
+    // Helper columns (N:P) for Salary A period mapping:
+    // N = Salary A start date, O = period label (next month), P = period end date (next Salary A - 1)
+    dashboardSheet.getRange(3, 14).setFormula(
+      '=IFERROR(SORT(FILTER(FinalTracker!A2:A, FinalTracker!B2:B="Salary A", ISNUMBER(FinalTracker!A2:A))), "")'
+    );
+    dashboardSheet.getRange(3, 15).setFormula(
+      '=ARRAYFORMULA(IF(N3:N="", "", IF(N4:N="", "", TEXT(EDATE(N3:N, 1), "mmm yyyy"))))'
+    );
+    dashboardSheet.getRange(3, 16).setFormula(
+      '=ARRAYFORMULA(IF(N3:N="", "", IF(N4:N="", "", N4:N-1)))'
+    );
+
+    // Row 3: month selector by month number (1-12), no data validation
+    dashboardSheet.getRange(3, 10).setValue('Month (1-12):').setFontWeight('bold');
+    dashboardSheet.getRange(3, 11).setValue(new Date().getMonth() + 1);
+    dashboardSheet.getRange(3, 11).setNumberFormat('0');
+
+    // Row 4: date range - mapped from Salary A periods using selected month number in K3
+    dashboardSheet.getRange(4, 10).setValue('From:').setFontWeight('bold');
+    dashboardSheet.getRange(4, 11).setFormula('=IFERROR(INDEX(FILTER(N3:N, N3:N<>"", MONTH(EDATE(N3:N,1))=K3), ROWS(FILTER(N3:N, N3:N<>"", MONTH(EDATE(N3:N,1))=K3))), "")');
+    dashboardSheet.getRange(4, 12).setValue('To:').setFontWeight('bold');
+    dashboardSheet.getRange(4, 13).setFormula('=IFERROR(INDEX(FILTER(P3:P, N3:N<>"", MONTH(EDATE(N3:N,1))=K3), ROWS(FILTER(P3:P, N3:N<>"", MONTH(EDATE(N3:N,1))=K3))), "")');
+    dashboardSheet.getRange(4, 11).setNumberFormat('yyyy-mm-dd');
+    dashboardSheet.getRange(4, 13).setNumberFormat('yyyy-mm-dd');
+
+    // Row 5: QUERY - FinalTracker, exclude Adjustment only, debits only; month range K4 to M4
+    // QUERY returns its own header row: Category | Spent
+    dashboardSheet.getRange(5, 10).setFormula(
+      '=QUERY(FinalTracker!A2:F10000, "select D, sum(F) where A >= date \'"&TEXT(K4,"yyyy-mm-dd")&"\' and A <= date \'"&TEXT(M4,"yyyy-mm-dd")&"\' and D <> \'Adjustment\' and F > 0 group by D label D \'Category\', sum(F) \'Spent\'")'
+    );
+    dashboardSheet.getRange(5, 10, 1, 2).setFontWeight('bold').setBackground('#E8E8E8');
+
+    // Formatting: Spent column number format (QUERY data starts at row 6; row 5 is header)
+    dashboardSheet.getRange(6, 11, 100, 1).setNumberFormat('#,##0.00');
+
+    // Column widths
+    dashboardSheet.setColumnWidth(10, 180); // J - Category
+    dashboardSheet.setColumnWidth(11, 100); // K - Spent
+    dashboardSheet.setColumnWidth(12, 40);  // L - To label
+    dashboardSheet.setColumnWidth(13, 120); // M - end date
+    dashboardSheet.hideColumns(14, 3);      // N:P helper columns
+
     SpreadsheetApp.getUi().alert('Dashboard initialized!\n\nFormulas are set up and will auto-update.\n\nKey metric: "AVAILABLE TO SPEND" shows 1:1 impact of your spending.');
   }
 
@@ -3099,7 +3256,7 @@ function normalizeVariableExpensesCcDates(silent = false) {
     }
     
     // Read columns A and K: Description and Account
-    const data = savingsGoalsSheet.getRange(2, 1, savingsGoalsSheet.getLastRow() - 1, 11).getValues();
+    const data = savingsGoalsSheet.getRange(2, 1, savingsGoalsSheet.getLastRow() - 1, 12).getValues();
     
     data.forEach(row => {
       const description = (row[0] || '').toString().trim();
@@ -3116,14 +3273,15 @@ function normalizeVariableExpensesCcDates(silent = false) {
   /**
    * Generate/refresh SavingsChecklist sheet with savings occurrences from FinalTracker
    */
-  function generateSavingsChecklist() {
+  function generateSavingsChecklist(silent) {
+    const isSilent = silent === true;
     const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
     const finalTrackerSheet = ss.getSheetByName('FinalTracker');
     const savingsChecklistSheet = ss.getSheetByName('SavingsChecklist');
     
     if (!finalTrackerSheet) {
-      SpreadsheetApp.getUi().alert('FinalTracker sheet not found.');
-      return;
+      if (!isSilent) SpreadsheetApp.getUi().alert('FinalTracker sheet not found.');
+      return 0;
     }
     
     ensureAppliedColumn();
@@ -3144,8 +3302,8 @@ function normalizeVariableExpensesCcDates(silent = false) {
     // Read FinalTracker data
     const lastRow = finalTrackerSheet.getLastRow();
     if (lastRow <= 1) {
-      SpreadsheetApp.getUi().alert('FinalTracker sheet is empty.');
-      return;
+      if (!isSilent) SpreadsheetApp.getUi().alert('FinalTracker sheet is empty.');
+      return 0;
     }
     
     // Read all columns (at least 10 to include SavingsApplied if it exists)
@@ -3161,8 +3319,8 @@ function normalizeVariableExpensesCcDates(silent = false) {
     const appliedColIndex = headers.indexOf('Applied');
     
     if (categoryColIndex === -1 || descriptionColIndex === -1 || dateColIndex === -1 || debitsColIndex === -1) {
-      SpreadsheetApp.getUi().alert('FinalTracker sheet missing required columns.');
-      return;
+      if (!isSilent) SpreadsheetApp.getUi().alert('FinalTracker sheet missing required columns.');
+      return 0;
     }
     
     // Filter savings entries that haven't been applied
@@ -3229,11 +3387,15 @@ function normalizeVariableExpensesCcDates(silent = false) {
       checklistSheet.getRange(2, 3, checklistRows.length, 1).setNumberFormat('#,##0.00');
     }
     
-    SpreadsheetApp.getUi().alert(
-      `Savings Checklist generated!\n\n` +
-      `Found ${checklistRows.length} pending savings occurrence(s).\n\n` +
-      `Select rows and use "Apply Selected Savings Transfer" to apply them.`
-    );
+    if (!isSilent) {
+      SpreadsheetApp.getUi().alert(
+        `Savings Checklist generated!\n\n` +
+        `Found ${checklistRows.length} pending savings occurrence(s).\n\n` +
+        `Select rows and use "Apply Selected Savings Transfer" to apply them.`
+      );
+    }
+    
+    return checklistRows.length;
   }
 
   /**
@@ -3501,6 +3663,7 @@ function normalizeVariableExpensesCcDates(silent = false) {
       .addItem('Setup Running Balance', 'setupRunningBalance')
       .addItem('Reset Starting Balance (Date + Value)', 'updateStartingBalance')
       .addItem('Reconcile Balance', 'reconcileBalance')
+      .addItem('Reconcile Credit Card Bill', 'reconcileCreditCardBillFromScreenshot')
       .addItem('Recalculate Daily Budget', 'recalcDailyBudget')
       .addSeparator()
       .addItem('Update Goals Progress', 'updateGoalsCalculations')
